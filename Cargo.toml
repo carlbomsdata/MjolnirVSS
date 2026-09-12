@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/mjolnir-core",
     "crates/mjolnir-image",
+    "crates/mjolnir-storage",
 ]
 
 [workspace.package]
