@@ -4,6 +4,7 @@ members = [
     "crates/mjolnir-core",
     "crates/mjolnir-image",
     "crates/mjolnir-storage",
+    "crates/mjolnir-vss",
 ]
 
 [workspace.package]

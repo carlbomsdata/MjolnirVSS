@@ -200,6 +200,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mjolnir-vss"
+version = "0.1.0"
+dependencies = [
+ "mjolnir-core",
+ "mjolnir-storage",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
