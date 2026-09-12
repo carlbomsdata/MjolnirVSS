@@ -1,0 +1,80 @@
+MjolnirVSS
+Copyright (C) the MjolnirVSS contributors.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See the file LICENSE for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+
+Independence
+------------
+
+MjolnirVSS is an independent, clean room implementation. It is not derived from,
+does not incorporate code from, and does not interoperate with the file formats
+of any commercial backup product. It uses documented Microsoft interfaces and a
+backup format designed for this project and specified in docs/backup-format.md.
+
+MjolnirVSS does not redistribute any Microsoft binary. Where recovery media is
+concerned, it copies files that are already present on the user's own computer,
+onto media the user created with Microsoft's own tools.
+
+
+Third party components
+----------------------
+
+The compiled program statically links the Rust crates below. Each is under a
+licence compatible with the GNU General Public License version 3. Their full
+licence texts are distributed with their source and are reproduced by
+`cargo license` or by inspecting the crate sources in the Cargo registry.
+
+  windows, windows-core, windows-strings, windows-result, windows-link,
+  windows-implement, windows-interface, windows-targets
+      Microsoft Corporation
+      MIT OR Apache-2.0
+
+  blake3
+      Jack O'Connor and contributors
+      CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception
+
+  zstd, zstd-safe
+      Rust bindings by Alexandre Bury
+      MIT
+
+  zstd-sys
+      Bindings to the Zstandard reference library by Meta Platforms, Inc.
+      Binding crate: MIT
+      Zstandard library: BSD-3-Clause OR GPL-2.0
+      MjolnirVSS relies on the BSD-3-Clause terms, which are compatible with the
+      GNU General Public License version 3.
+
+  serde, serde_core, serde_derive, serde_json
+      Erick Tryzelaar, David Tolnay and contributors
+      MIT OR Apache-2.0
+
+  clap and its supporting crates (clap_builder, clap_lex, anstream, anstyle,
+  anstyle-parse, anstyle-query, anstyle-wincon, colorchoice, strsim,
+  is_terminal_polyfill, once_cell_polyfill, utf8parse)
+      MIT OR Apache-2.0
+
+  memchr, itoa, zmij, cfg-if, arrayvec, constant_time_eq, cpufeatures
+      MIT OR Apache-2.0, or Unlicense OR MIT
+
+Development and test only, not part of the distributed program:
+
+  proptest         MIT OR Apache-2.0
+  tempfile         MIT OR Apache-2.0
+  proc-macro2, quote, syn, unicode-ident
+                   MIT OR Apache-2.0
+
+
+Apache-2.0 and MIT are one way compatible with the GNU General Public License
+version 3: their terms may be combined into a GPL-3.0-or-later work, which is
+what MjolnirVSS is. CC0-1.0 and BSD-3-Clause are likewise compatible.
+
+MjolnirVSS makes no network connections. It contains no telemetry, no analytics,
+no update check and no account system.

@@ -1,0 +1,32 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Packaging output
+/dist/
+/artifacts/
+
+# Test scratch: disposable virtual disks and generated backup sets
+/testdata/
+*.vhd
+*.vhdx
+*.mjolnir-tmp
+
+# Logs
+*.log
+
+# Agent/session files must never be committed
+/.claude/
+CLAUDE.md
+AGENTS.md
+*.session.md
+*.plan.md
+
+# Editors and OS
+/.vs/
+/.vscode/
+/.idea/
+*.user
+.DS_Store
+Thumbs.db
