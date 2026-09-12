@@ -123,6 +123,47 @@ the service what it knows about rather than probing the device.
 
 ---
 
+## Windows may remove other shadow copies anyway
+
+This one is uncomfortable and is recorded because it was measured rather than
+anticipated.
+
+Deleting by snapshot set identifier means MjolnirVSS never asks for anybody
+else's shadow copy to be removed. It does not mean none is. The volume snapshot
+driver keeps a volume's shadow copies in one differential area, and it can only
+release space from the oldest end. When the temporary shadow copy MjolnirVSS
+created is released, the driver sometimes has to delete older shadow copies
+first in order to reclaim it, and it logs exactly that:
+
+```text
+System log, Volsnap, event 95
+The oldest shadow copy of volume C: was deleted to allow shadow copies
+created afterward and marked for delete to be deleted.
+```
+
+Measured on the development machine on 12 September 2026: three pre-existing
+shadow copies of `C:` were removed by the driver at the moment a MjolnirVSS
+diagnostic released its own, and `vssadmin list shadowstorage` afterwards showed
+zero bytes in use on that volume. The same log shows the machine's own scheduled
+backup causing the same cascade two days earlier, so this is the driver's normal
+behaviour on this volume rather than something MjolnirVSS does wrong.
+
+What follows from it, stated plainly rather than left implied:
+
+- **Taking a backup can cost you existing restore points.** If a volume's
+  shadow copies matter to you — System Restore points, another backup product's
+  snapshots — check them afterwards.
+- It is not avoidable from inside the application. Leaving the temporary shadow
+  copy behind instead would be worse, and it would be released eventually with
+  the same consequence.
+- Whether it happens depends on the volume's shadow copy storage limit. On the
+  machine measured, `C:` was capped at 3% of the volume.
+
+MjolnirVSS does not change that limit, and will not: how much room a machine
+gives its shadow copies is the owner's decision.
+
+---
+
 ## Cancellation
 
 Every wait on an asynchronous operation is a bounded half second loop that checks

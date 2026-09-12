@@ -33,7 +33,14 @@ Afterwards, confirm nothing was left behind:
 vssadmin list shadows
 ```
 
-The count should be the same as before the run.
+No shadow copy created by the run should remain.
+
+The count may nonetheless be **lower** than before, and that is not a leak in
+the other direction: releasing a shadow copy can make the volume snapshot driver
+delete older ones of the same volume, which it logs as Volsnap event 95 in the
+System log. This is measured and explained in
+[`vss-lifecycle.md`](vss-lifecycle.md). On a machine whose shadow copies matter,
+run the opt in tests knowing that.
 
 ### Physical disk restore
 
