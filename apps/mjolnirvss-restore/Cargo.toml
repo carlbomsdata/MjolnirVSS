@@ -1,0 +1,43 @@
+[package]
+name = "mjolnirvss-restore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "MjolnirVSS recovery application for Windows PE"
+
+# Cargo does not allow a dot in a target name, so the file is built as
+# MjolnirVSS-Restore.exe and renamed to MjolnirVSS.Restore.exe by
+# scripts/package.ps1. This crate must never depend on mjolnir-vss: vssapi.dll
+# is not present in base Windows PE and importing it would stop the recovery
+# application from starting exactly when it is needed.
+[[bin]]
+name = "MjolnirVSS-Restore"
+path = "src/main.rs"
+
+[dependencies]
+mjolnir-core = { workspace = true }
+mjolnir-image = { workspace = true }
+mjolnir-storage = { workspace = true }
+mjolnir-restore = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+mjolnir-win32-ui = { workspace = true }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemServices",
+] }

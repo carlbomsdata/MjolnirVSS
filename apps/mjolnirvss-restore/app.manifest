@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+      type="win32"
+      name="MjolnirVSS.Restore"
+      version="0.1.0.0"
+      processorArchitecture="amd64"/>
+
+  <description>MjolnirVSS recovery application for Windows PE</description>
+
+  <!--
+    The elevation request is NOT here. Rust's MSVC target already embeds a
+    default manifest asking for asInvoker, and mt.exe refuses to merge two
+    snippets that disagree about the level. build.rs passes /MANIFESTUAC to the
+    linker instead, which makes mt.exe generate the trustInfo section itself and
+    leaves nothing to conflict with.
+
+    Reading a physical disk and creating a shadow copy both need administrator
+    rights, so they are asked for when the program starts rather than after the
+    operator has already chosen a destination. MjolnirVSS still installs
+    nothing: elevation belongs to the running process and ends when it exits.
+  -->
+
+  <!-- Themed common controls, so the window looks like the rest of Windows. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+          type="win32"
+          name="Microsoft.Windows.Common-Controls"
+          version="6.0.0.0"
+          processorArchitecture="amd64"
+          publicKeyToken="6595b64144ccf1df"
+          language="*"/>
+    </dependentAssembly>
+  </dependency>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!--
+        Per monitor v2 so the window stays sharp when it is moved between a
+        laptop screen and an external monitor, and so the system font comes
+        back at the right size. The older dpiAware entry is the fallback for
+        Windows 10 builds that do not understand dpiAwareness.
+      -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11. -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>

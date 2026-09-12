@@ -8,6 +8,10 @@ members = [
     "crates/mjolnir-ntfs",
     "crates/mjolnir-backup",
     "crates/mjolnir-restore",
+    "crates/mjolnir-win32-ui",
+    "crates/mjolnir-cli",
+    "apps/mjolnirvss",
+    "apps/mjolnirvss-restore",
 ]
 
 [workspace.package]
