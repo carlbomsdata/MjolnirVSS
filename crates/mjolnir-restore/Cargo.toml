@@ -1,0 +1,27 @@
+[package]
+name = "mjolnir-restore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mjolnir-core = { workspace = true }
+mjolnir-image = { workspace = true }
+mjolnir-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+] }
+
+[dev-dependencies]
+mjolnir-testkit = { workspace = true }
+tempfile = { workspace = true }

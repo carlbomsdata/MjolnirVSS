@@ -1,0 +1,23 @@
+[package]
+name = "mjolnir-backup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mjolnir-core = { workspace = true }
+mjolnir-image = { workspace = true }
+mjolnir-storage = { workspace = true }
+mjolnir-ntfs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+mjolnir-vss = { workspace = true }
+
+[dev-dependencies]
+mjolnir-testkit = { workspace = true }
+tempfile = { workspace = true }

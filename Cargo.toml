@@ -5,6 +5,9 @@ members = [
     "crates/mjolnir-image",
     "crates/mjolnir-storage",
     "crates/mjolnir-vss",
+    "crates/mjolnir-ntfs",
+    "crates/mjolnir-backup",
+    "crates/mjolnir-restore",
 ]
 
 [workspace.package]
