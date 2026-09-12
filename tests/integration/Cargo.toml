@@ -1,0 +1,26 @@
+[package]
+name = "mjolnir-integration-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# This crate exists only to hold tests that span several crates at once. It has
+# no library of its own; everything lives under tests/.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+mjolnir-core = { workspace = true }
+mjolnir-image = { workspace = true }
+mjolnir-storage = { workspace = true }
+mjolnir-backup = { workspace = true }
+mjolnir-restore = { workspace = true }
+mjolnir-testkit = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }

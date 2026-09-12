@@ -325,6 +325,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mjolnir-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "mjolnir-backup",
+ "mjolnir-core",
+ "mjolnir-image",
+ "mjolnir-restore",
+ "mjolnir-storage",
+ "mjolnir-testkit",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "mjolnir-ntfs"
 version = "0.1.0"
 dependencies = [

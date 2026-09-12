@@ -10,8 +10,10 @@ members = [
     "crates/mjolnir-restore",
     "crates/mjolnir-win32-ui",
     "crates/mjolnir-cli",
+    "crates/mjolnir-testkit",
     "apps/mjolnirvss",
     "apps/mjolnirvss-restore",
+    "tests/integration",
 ]
 
 [workspace.package]
