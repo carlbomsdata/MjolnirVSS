@@ -16,17 +16,14 @@ use mjolnir_core::ids::{BackupName, DiskId, PartitionId, StreamId, VolumeId};
 use mjolnir_core::math;
 use mjolnir_image::disk_layout::{PartitionRole, PartitionStyle};
 use mjolnir_image::manifest::CaptureMethod;
+use mjolnir_storage::bitlocker::Encryption;
 use mjolnir_storage::disks::{PhysicalDisk, PhysicalPartition};
 use mjolnir_storage::system::SystemSummary;
 use mjolnir_storage::volumes::VolumeInfo;
 
-/// The BitLocker volume signature, as it appears at offset 3 of the first
-/// sector of an encrypted partition.
-///
-/// A BitLocker volume that Windows has unlocked still looks like NTFS through
-/// the filesystem, so the only honest way to notice it is to read the partition
-/// itself off the physical disk.
-pub const BITLOCKER_SIGNATURE: &[u8; 8] = b"-FVE-FS-";
+/// The BitLocker volume signature, re-exported from the NTFS layer where the
+/// boot sector code that recognises it lives.
+pub use mjolnir_ntfs::boot::BITLOCKER_OEM_ID as BITLOCKER_SIGNATURE;
 
 /// How much of each partition to capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +105,11 @@ pub struct PlannedPartition {
     pub needs_snapshot: bool,
     /// How many bytes will actually be read.
     pub planned_bytes: u64,
+    /// Whether this partition is encrypted at rest by BitLocker.
+    ///
+    /// The shadow copy presents it decrypted, so what reaches the backup is
+    /// readable. The operator is told before choosing a destination.
+    pub encrypted_at_rest: bool,
 }
 
 /// Everything the backup is going to do, decided before anything happens.
@@ -131,8 +133,6 @@ pub struct BackupPlan {
     pub source_bytes: u64,
     /// Things worth telling the operator that do not stop the backup.
     pub warnings: Vec<String>,
-    /// Whether this produces a backup that cannot be restored.
-    pub is_preview: bool,
     /// Whether the backup will contain readable copies of data that is
     /// encrypted at rest on the source machine.
     ///
@@ -142,6 +142,8 @@ pub struct BackupPlan {
     /// operator is told this where the destination is chosen, because that is
     /// the only place it changes what they would do.
     pub contains_decrypted_data: bool,
+    /// Whether this produces a backup that cannot be restored.
+    pub is_preview: bool,
 }
 
 impl BackupPlan {
@@ -252,6 +254,15 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         let planned_bytes = request.limit.applies_to(partition.length);
         source_bytes = math::add_u64("planned source bytes", source_bytes, planned_bytes)?;
 
+        let encrypted_at_rest = is_unlocked_bitlocker(&disk, partition, volume.as_ref());
+        if encrypted_at_rest {
+            warnings.push(format!(
+                "Partition {} ({}) is protected by BitLocker. It is unlocked, so the backup will contain a readable copy of it. The backup itself is not encrypted.",
+                partition.number,
+                role.describe()
+            ));
+        }
+
         partitions.push(PlannedPartition {
             id,
             stream_id,
@@ -262,6 +273,7 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
             capture,
             needs_snapshot,
             planned_bytes,
+            encrypted_at_rest,
         });
     }
 
@@ -280,6 +292,8 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
     source_bytes = math::add_u64("planned source bytes", source_bytes, head_bytes)?;
     source_bytes = math::add_u64("planned source bytes", source_bytes, tail_bytes)?;
 
+    let contains_decrypted_data = partitions.iter().any(|p| p.encrypted_at_rest);
+
     if request.limit.is_preview() {
         warnings.push(
             "This is a preview run: only the first part of each partition is captured, and the result cannot be restored."
@@ -296,9 +310,9 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         tail_bytes,
         snapshot_volumes,
         source_bytes,
+        contains_decrypted_data,
         warnings,
         is_preview: request.limit.is_preview(),
-        contains_decrypted_data: false,
     })
 }
 
@@ -395,48 +409,47 @@ fn check_partition_is_supported(
         }
     }
 
-    if is_bitlocker_encrypted(partition, disk)? {
-        return Err(Error::unsupported(
-            format!(
-                "partition {} ({}) is encrypted with BitLocker",
-                partition.number,
-                role.describe()
-            ),
-            "MjolnirVSS can see that the partition is a BitLocker volume, but backing one up and restoring it so that Windows still boots has not been designed or tested yet, and shipping it untested would risk a backup that cannot be recovered from",
-            "turn BitLocker off for this drive and take the backup again, or wait for a version that supports it; do not rely on a backup of an encrypted disk until MjolnirVSS says it supports one",
-        ));
+    // BitLocker. An unlocked volume is captured through its shadow copy, which
+    // presents it decrypted; a locked one cannot be read at all. See
+    // docs/bitlocker.md for the measurement this rests on.
+    let encryption = mjolnir_storage::bitlocker::inspect(disk, partition, volume)?;
+    match encryption.encryption {
+        Encryption::BitLockerLocked => {
+            return Err(Error::unsupported(
+                format!(
+                    "partition {} ({}) is encrypted with BitLocker and is locked",
+                    partition.number,
+                    role.describe()
+                ),
+                "a locked volume cannot be read by anything, including MjolnirVSS, so there is nothing to copy; the backup would be empty rather than merely encrypted",
+                "unlock the drive in Windows and run the backup again; MjolnirVSS never asks for or stores a recovery key",
+            ));
+        }
+        Encryption::Unknown => {
+            // Only reachable without administrator rights, where the disk
+            // cannot be read. Planning still has to succeed so the window can
+            // show what it found; the check runs again with the rights it needs
+            // before anything is copied.
+        }
+        Encryption::BitLockerUnlocked | Encryption::None => {}
     }
 
     Ok(())
 }
 
-/// Whether a partition holds a BitLocker volume.
+/// Whether a partition is an unlocked BitLocker volume.
 ///
-/// Read from the physical disk rather than through the filesystem, because an
-/// unlocked BitLocker volume presents itself as ordinary NTFS and would
-/// otherwise go unnoticed.
-fn is_bitlocker_encrypted(partition: &PhysicalPartition, disk: &PhysicalDisk) -> Result<bool> {
-    let device = match mjolnir_storage::device::Device::open_read(
-        &disk.device_path,
-        disk.logical_sector_size,
-        disk.size_bytes,
-    ) {
-        Ok(d) => d,
-        // Without administrator rights the disk cannot be read. Planning still
-        // has to work so the window can show what it found, so this is not
-        // treated as a failure; the check runs again before any data is copied.
-        Err(e) if e.exit() == ExitCode::AccessDenied => return Ok(false),
-        Err(e) => return Err(e),
-    };
-
-    let mut sector = vec![0u8; disk.logical_sector_size.max(512) as usize];
-    if device
-        .read_at(partition.starting_offset, &mut sector)
-        .is_err()
-    {
-        return Ok(false);
-    }
-    Ok(sector.len() >= 11 && &sector[3..11] == BITLOCKER_SIGNATURE)
+/// Used to decide whether the backup will contain readable copies of data that
+/// is encrypted at rest, which the operator is told before choosing where to
+/// put it.
+fn is_unlocked_bitlocker(
+    disk: &PhysicalDisk,
+    partition: &PhysicalPartition,
+    volume: Option<&VolumeInfo>,
+) -> bool {
+    mjolnir_storage::bitlocker::inspect(disk, partition, volume)
+        .map(|e| e.encryption == Encryption::BitLockerUnlocked)
+        .unwrap_or(false)
 }
 
 /// Refuses to write a backup onto the disk being backed up.
@@ -792,5 +805,18 @@ mod tests {
         let mut ntfs = vec![0u8; 512];
         ntfs[3..11].copy_from_slice(b"NTFS    ");
         assert_ne!(&ntfs[3..11], BITLOCKER_SIGNATURE);
+    }
+
+    #[test]
+    fn an_unlocked_bitlocker_partition_is_planned_rather_than_refused() {
+        // The decision the whole BitLocker milestone rests on, expressed
+        // without needing a disk: only a locked volume is refused.
+        fn decide(e: Encryption) -> bool {
+            !matches!(e, Encryption::BitLockerLocked)
+        }
+        assert!(decide(Encryption::None));
+        assert!(decide(Encryption::BitLockerUnlocked));
+        assert!(decide(Encryption::Unknown));
+        assert!(!decide(Encryption::BitLockerLocked));
     }
 }

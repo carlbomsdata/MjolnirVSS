@@ -86,7 +86,7 @@ is the honest state of each.
 
 | # | Test | State |
 |---|---|---|
-| 1 | Backup on Windows 11 x64 | Blocked on this machine by BitLocker; discovery, planning and the shadow copy path are proven |
+| 1 | Backup on Windows 11 x64 | Discovery, planning and the shadow copy path proven on a BitLocker machine; a full live backup has not yet been run end to end |
 | 2 | Backup on Windows 10 x64 | Not done |
 | 3 | Backup with files changing during the run | Not done |
 | 4 | Common GPT layout: EFI, MSR, Windows, recovery | Proven against synthetic disks; not against a real machine end to end |

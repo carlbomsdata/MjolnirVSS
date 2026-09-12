@@ -20,6 +20,8 @@ reliably.
 - Restore onto a blank disk, including rebuilding the partition table for the
   target's geometry, tested against virtual disks with byte for byte comparison.
 - The safety refusals, each with a test that tries to do the forbidden thing.
+- BitLocker: an unlocked volume is captured through its shadow copy, measured
+  rather than assumed, with a locked one refused.
 - The backup window and the recovery wizard.
 
 ---
@@ -86,9 +88,10 @@ the result recorded.
   addressed and cut on stable boundaries, so an unchanged region produces the
   same block, and `chunk_store.root` is a field so several backups of a machine
   can share one store. Needs item 4 first.
-- **BitLocker.** Only after its backup and restore behaviour has been designed,
-  implemented and tested, and only if the restored machine still boots. Until
-  then it is detected and refused.
+- **Preserving BitLocker across a restore.** Backing up an unlocked BitLocker
+  volume works today, but the restored disk comes back unencrypted. Putting the
+  encryption back automatically is a separate piece of work, and is behind the
+  boot test like everything else.
 - **Retention**, so old backups can be removed without breaking a chain.
 - **Scheduling** inside the application, without registering anything permanent.
 - **Restoring onto a smaller disk**, by shrinking the Windows partition.

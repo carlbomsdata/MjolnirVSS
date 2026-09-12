@@ -16,6 +16,8 @@
 pub mod gpt;
 
 #[cfg(windows)]
+pub mod bitlocker;
+#[cfg(windows)]
 pub mod device;
 #[cfg(windows)]
 pub mod disks;
@@ -26,6 +28,8 @@ pub mod volumes;
 
 pub use gpt::{GptHeader, GptPartitionEntry, ParsedGpt};
 
+#[cfg(windows)]
+pub use bitlocker::{inspect as inspect_encryption, Encryption, PartitionEncryption};
 #[cfg(windows)]
 pub use device::Device;
 #[cfg(windows)]

@@ -14,7 +14,7 @@ below is a real check with a test behind it, and every one explains itself.
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |
-| Windows volume | NTFS, not encrypted |
+| Windows volume | NTFS, encrypted or not (BitLocker must be unlocked) |
 | EFI system partition | FAT32 |
 | Recovery partition | NTFS |
 | Sector sizes | 512 native and 512e (512 logical / 4096 physical); 4Kn is implemented and unit tested but has not been exercised on real hardware |
@@ -35,7 +35,7 @@ below is a real check with a test behind it, and every one explains itself.
 | **MBR disks and legacy BIOS boot** | Only GPT layouts are captured and recreated. |
 | **Windows spread across several disks** | This version restores one system disk at a time. |
 | **Untested sector sizes** | Anything other than 512 or 4096 bytes. Every offset in a backup is measured in sectors, so an untested size puts the whole backup in doubt. |
-| **BitLocker** | See below. |
+| **BitLocker, locked** | Nothing can read a locked volume, so there is nothing to copy. An **unlocked** volume is supported; see [`bitlocker.md`](bitlocker.md). |
 | **Restoring onto a smaller disk** | The partitions would not fit. Checked before anything is written. |
 | **Restoring onto a different sector size** | Every offset in the backup is measured in the source's sectors. |
 | **Restoring onto the disk holding the backup** | It would destroy the backup partway through the restore. |
@@ -47,32 +47,23 @@ below is a real check with a test behind it, and every one explains itself.
 
 ## BitLocker
 
-**MjolnirVSS detects BitLocker and stops.**
+**An unlocked BitLocker volume is supported.** It is read through its shadow
+copy, which presents it decrypted, so the backup captures an ordinary NTFS
+filesystem. This was established by measurement, not assumption; see
+[`bitlocker.md`](bitlocker.md) for the evidence and how to reproduce it.
 
-An unlocked BitLocker volume looks exactly like ordinary NTFS through the
-filesystem, so checking there would miss it. MjolnirVSS reads the first sector of
-the partition from the physical disk instead and looks for the `-FVE-FS-`
-signature, which is present whether or not Windows currently has the volume
-unlocked.
+A **locked** volume is refused: Windows itself cannot see inside it, so a backup
+would be empty rather than encrypted.
 
-The refusal is deliberate and not a limitation of effort. Backing up an
-encrypted volume and restoring it so that Windows still starts involves
-decisions that have not been made yet:
+Two consequences, stated rather than implied:
 
-- Is the backup of the encrypted bytes, or of the decrypted contents? One
-  produces a backup that is useless without the key; the other produces a backup
-  that silently removes the encryption.
-- What happens to the recovery key, which must never be written into a backup or
-  a log?
-- Does the restored disk still unlock against the TPM, which is bound to the
-  original machine?
+- the backup holds readable, decrypted copies of the files, and is not itself
+  encrypted;
+- a restored disk comes back unencrypted, and BitLocker can be switched on again
+  afterwards.
 
-Until those are answered, designed, implemented and tested, MjolnirVSS says so
-rather than producing something that appears to work.
-
-**To use MjolnirVSS today, turn BitLocker off for the system drive.** In Windows:
-Settings, then Privacy and security, then Device encryption or BitLocker, and
-turn it off. Decryption takes a while and the machine stays usable throughout.
+MjolnirVSS never reads, stores or logs a recovery key, and never changes
+BitLocker's state.
 
 ---
 

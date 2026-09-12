@@ -85,6 +85,13 @@ pub enum Command {
         path: PathBuf,
     },
 
+    /// Examine how BitLocker and the shadow copy service behave on this
+    /// computer.
+    ///
+    /// Reads a handful of sectors and writes nothing. Creates a shadow copy and
+    /// releases it again. Never reads or stores any key material.
+    DiagnoseBitlocker,
+
     /// Show the shadow copies on this computer, and optionally clean up.
     CleanupSnapshots {
         /// Only report; never remove anything.
@@ -146,6 +153,7 @@ pub fn run(cli: Cli) -> ExitCode {
             cmd_verify(&cli, path.clone(), *quick, progress.as_mut(), &cancel)
         }
         Command::List { path } => cmd_list(&cli, path.clone()),
+        Command::DiagnoseBitlocker => cmd_diagnose_bitlocker(&cli, &cancel),
         Command::CleanupSnapshots { owned_only } => cmd_cleanup(&cli, *owned_only),
     };
 
@@ -584,6 +592,46 @@ fn cmd_list(cli: &Cli, path: PathBuf) -> Result<ExitCode> {
         );
     }
     Ok(ExitCode::Success)
+}
+
+#[cfg(windows)]
+fn cmd_diagnose_bitlocker(cli: &Cli, cancel: &CancelToken) -> Result<ExitCode> {
+    let diagnosis = mjolnir_backup::diagnose_system_volume(cancel)?;
+
+    if cli.json {
+        let value = serde_json::json!({
+            "volume": diagnosis.volume,
+            "drive_letter": diagnosis.drive_letter,
+            "partition_offset": diagnosis.partition_offset,
+            "on_disk_signature": diagnosis.on_disk_signature.describe(),
+            "reported_filesystem": diagnosis.reported_filesystem,
+            "encryption": diagnosis.encryption.describe(),
+            "snapshot_device": diagnosis.snapshot_device,
+            "snapshot_signature": diagnosis.snapshot_signature.map(|s| s.describe()),
+            "mft_found": diagnosis.mft_found,
+            "mft_mirror_found": diagnosis.mft_mirror_found,
+            "findings": diagnosis.findings,
+            "conclusion": format!("{:?}", diagnosis.conclusion),
+            "can_be_backed_up": diagnosis.conclusion.can_be_backed_up(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+    } else {
+        print!("{}", diagnosis.report());
+    }
+
+    Ok(if diagnosis.conclusion.can_be_backed_up() {
+        ExitCode::Success
+    } else {
+        ExitCode::Unsupported
+    })
+}
+
+#[cfg(not(windows))]
+fn cmd_diagnose_bitlocker(_cli: &Cli, _cancel: &CancelToken) -> Result<ExitCode> {
+    Err(not_windows())
 }
 
 #[cfg(windows)]

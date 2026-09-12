@@ -62,7 +62,8 @@ onto a blank replacement disk after the original has failed.
 | Repairing UEFI boot configuration after a restore | **Not implemented.** If Windows does not start, you run Startup Repair yourself |
 | Restoring individual files from a backup | **Not implemented.** The index format is designed; the browser is not built |
 | Creating recovery media | **Not implemented.** Use Microsoft's Media Creation Tool and copy the recovery program onto it |
-| BitLocker encrypted disks | **Detected and refused.** See below |
+| BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |
+| BitLocker: locked volume | **Refused**, clearly |
 | Incremental backups | Not implemented, and deliberately not started until the above works |
 
 ---
@@ -82,12 +83,24 @@ untested sector size.
 
 ### BitLocker
 
-If the Windows partition is encrypted with BitLocker, MjolnirVSS stops and says
-so. It can see the encryption, but backing up an encrypted disk and restoring it
-so that Windows still starts has not been designed or tested, and shipping it
-untested would risk a backup that cannot be recovered from.
+**An unlocked BitLocker volume is backed up normally.** MjolnirVSS reads it
+through its shadow copy, which presents it decrypted, so the backup holds an
+ordinary NTFS filesystem. This was measured rather than assumed; the evidence is
+in [`docs/bitlocker.md`](docs/bitlocker.md) and you can reproduce it with
+`MjolnirVSS.exe diagnose-bitlocker`.
 
-To use MjolnirVSS today, turn BitLocker off for the system drive first.
+A **locked** volume is refused, because nothing can read it.
+
+Two things follow, and MjolnirVSS says both rather than leaving them implied:
+
+- **The backup contains readable copies of your files.** It is not encrypted, by
+  BitLocker or by MjolnirVSS. Look after the backup drive as carefully as the
+  computer.
+- **A restored disk comes back unencrypted.** BitLocker protection does not carry
+  over. You can turn it on again after restoring.
+
+MjolnirVSS never reads, stores or logs a recovery key, and never changes
+BitLocker's state.
 
 ---
 
@@ -113,6 +126,7 @@ MjolnirVSS.exe backup --destination E:\Backups
 MjolnirVSS.exe verify E:\Backups\DESKTOP-1A2B_2026-09-12_1015
 MjolnirVSS.exe list E:\Backups
 MjolnirVSS.exe cleanup-snapshots
+MjolnirVSS.exe diagnose-bitlocker
 ```
 
 `--preview <bytes>` captures only the first part of each partition, so the whole
@@ -206,6 +220,7 @@ Redistributable is not required.
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit together and why |
 | [`docs/backup-format.md`](docs/backup-format.md) | The on disk format, in enough detail to reimplement |
 | [`docs/vss-lifecycle.md`](docs/vss-lifecycle.md) | How the shadow copy is taken and released |
+| [`docs/bitlocker.md`](docs/bitlocker.md) | How BitLocker is handled, and the measurement behind it |
 | [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md) | Recovering a computer, step by step |
 | [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media, and why it is not automated yet |
 | [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back (designed, not built) |

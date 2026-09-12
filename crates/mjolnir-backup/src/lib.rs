@@ -11,11 +11,13 @@
 #![warn(missing_docs)]
 
 pub mod capture;
+pub mod diagnose;
 pub mod log;
 pub mod plan;
 pub mod run;
 
 pub use capture::{capture_disk, CaptureSources, CaptureSpec, PartitionCapture};
+pub use diagnose::{diagnose_system_volume, Conclusion, Diagnosis};
 pub use log::RunLog;
 pub use plan::{plan, BackupPlan, BackupRequest, BackupScope, CaptureLimit, PlannedPartition};
 pub use run::{run, stages, BackupOutcome};

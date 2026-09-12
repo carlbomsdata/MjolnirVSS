@@ -11,14 +11,18 @@
 //! Copyright (C) the MjolnirVSS contributors.
 //! Licensed under the GNU General Public License, version 3 or later.
 
-// The subsystem is set by build.rs: windows when there are no arguments so no
-// console flashes up, and the console is attached explicitly when there are.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Built for the console subsystem on purpose. A windows subsystem program does
+// not make the shell wait for it and does not inherit a redirected pipe, so the
+// command line would return instantly and print nothing into a script. The
+// console window that comes with that choice is released before the graphical
+// interface appears; see mjolnir_win32_ui::console.
 
 fn main() -> std::process::ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
 
     if args.len() <= 1 {
+        #[cfg(windows)]
+        mjolnir_win32_ui::console::release_own_console();
         return run_gui();
     }
 

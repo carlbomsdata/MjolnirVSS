@@ -367,6 +367,7 @@ version = "0.1.0"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
+ "mjolnir-ntfs",
  "serde",
  "tempfile",
  "windows",

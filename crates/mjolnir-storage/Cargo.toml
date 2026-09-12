@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 mjolnir-core = { workspace = true }
 mjolnir-image = { workspace = true }
+mjolnir-ntfs = { workspace = true }
 serde = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

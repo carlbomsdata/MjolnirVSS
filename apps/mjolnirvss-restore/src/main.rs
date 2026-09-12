@@ -12,8 +12,6 @@
 //! Copyright (C) the MjolnirVSS contributors.
 //! Licensed under the GNU General Public License, version 3 or later.
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 mod discover;
 
 #[cfg(windows)]
@@ -25,6 +23,8 @@ fn main() -> std::process::ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
 
     if args.len() <= 1 {
+        #[cfg(windows)]
+        mjolnir_win32_ui::console::release_own_console();
         return run_gui();
     }
 
