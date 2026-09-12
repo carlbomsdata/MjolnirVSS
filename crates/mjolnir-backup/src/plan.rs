@@ -16,7 +16,7 @@ use mjolnir_core::ids::{BackupName, DiskId, PartitionId, StreamId, VolumeId};
 use mjolnir_core::math;
 use mjolnir_image::disk_layout::{PartitionRole, PartitionStyle};
 use mjolnir_image::manifest::CaptureMethod;
-use mjolnir_storage::bitlocker::Encryption;
+use mjolnir_storage::bitlocker::{Encryption, PartitionEncryption};
 use mjolnir_storage::disks::{PhysicalDisk, PhysicalPartition};
 use mjolnir_storage::system::SystemSummary;
 use mjolnir_storage::volumes::VolumeInfo;
@@ -191,6 +191,11 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
     check_disk_is_supported(&disk)?;
     check_destination_is_not_the_source(&request.destination, &disk, &volumes)?;
 
+    // Asked once for the whole machine rather than once per partition: each
+    // query connects to the management service afresh. An empty list is a
+    // legitimate answer, and means the partition headers decide on their own.
+    let reported = mjolnir_storage::wmi::encryptable_volumes().unwrap_or_default();
+
     let disk_id = DiskId::new(format!("disk-{}", disk.number)).map_err(internal)?;
     let mut warnings = Vec::new();
     let mut partitions = Vec::new();
@@ -206,7 +211,10 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         let volume = find_volume_for(&volumes, disk.number, partition);
         let role = classify(partition, volume.as_ref(), &system);
 
-        check_partition_is_supported(partition, volume.as_ref(), role, &disk)?;
+        let encryption =
+            mjolnir_storage::bitlocker::inspect_with(&disk, partition, volume.as_ref(), &reported)?;
+
+        check_partition_is_supported(partition, volume.as_ref(), role, &encryption)?;
 
         // NTFS gets a shadow copy so the data is consistent. Everything else is
         // read straight off the disk, which is explained in
@@ -254,7 +262,7 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         let planned_bytes = request.limit.applies_to(partition.length);
         source_bytes = math::add_u64("planned source bytes", source_bytes, planned_bytes)?;
 
-        let encrypted_at_rest = is_unlocked_bitlocker(&disk, partition, volume.as_ref());
+        let encrypted_at_rest = encryption.encryption == Encryption::BitLockerUnlocked;
         if encrypted_at_rest {
             warnings.push(format!(
                 "Partition {} ({}) is protected by BitLocker. It is unlocked, so the backup will contain a readable copy of it. The backup itself is not encrypted.",
@@ -384,7 +392,7 @@ fn check_partition_is_supported(
     partition: &PhysicalPartition,
     volume: Option<&VolumeInfo>,
     role: PartitionRole,
-    disk: &PhysicalDisk,
+    encryption: &PartitionEncryption,
 ) -> Result<()> {
     if let Some(v) = volume {
         if !v.is_simple() {
@@ -412,7 +420,6 @@ fn check_partition_is_supported(
     // BitLocker. An unlocked volume is captured through its shadow copy, which
     // presents it decrypted; a locked one cannot be read at all. See
     // docs/bitlocker.md for the measurement this rests on.
-    let encryption = mjolnir_storage::bitlocker::inspect(disk, partition, volume)?;
     match encryption.encryption {
         Encryption::BitLockerLocked => {
             return Err(Error::unsupported(
@@ -435,21 +442,6 @@ fn check_partition_is_supported(
     }
 
     Ok(())
-}
-
-/// Whether a partition is an unlocked BitLocker volume.
-///
-/// Used to decide whether the backup will contain readable copies of data that
-/// is encrypted at rest, which the operator is told before choosing where to
-/// put it.
-fn is_unlocked_bitlocker(
-    disk: &PhysicalDisk,
-    partition: &PhysicalPartition,
-    volume: Option<&VolumeInfo>,
-) -> bool {
-    mjolnir_storage::bitlocker::inspect(disk, partition, volume)
-        .map(|e| e.encryption == Encryption::BitLockerUnlocked)
-        .unwrap_or(false)
 }
 
 /// Refuses to write a backup onto the disk being backed up.
@@ -742,10 +734,23 @@ mod tests {
             ),
             Some(&v),
             PartitionRole::Windows,
-            &disk(0),
+            &unencrypted(),
         )
         .unwrap_err();
         assert!(err.what().contains("spread across 2 regions"));
+    }
+
+    /// A finding for a partition with nothing unusual about it, so the tests
+    /// for the other refusals do not have to describe encryption they are not
+    /// about.
+    fn unencrypted() -> PartitionEncryption {
+        PartitionEncryption {
+            encryption: Encryption::None,
+            on_disk: mjolnir_ntfs::boot::VolumeSignature::Ntfs,
+            filesystem: Some("NTFS".to_owned()),
+            reported: None,
+            evidence: Vec::new(),
+        }
     }
 
     #[test]
@@ -760,10 +765,94 @@ mod tests {
             ),
             Some(&v),
             PartitionRole::Data,
-            &disk(0),
+            &unencrypted(),
         )
         .unwrap_err();
         assert!(err.what().contains("ReFS"));
+    }
+
+    #[test]
+    fn a_locked_bitlocker_volume_is_refused_and_the_reason_explains_itself() {
+        let v = volume(Some("D"), 0, 1 << 20, "RAW");
+        let locked = PartitionEncryption {
+            encryption: Encryption::BitLockerLocked,
+            on_disk: mjolnir_ntfs::boot::VolumeSignature::BitLocker,
+            filesystem: Some("RAW".to_owned()),
+            reported: None,
+            evidence: Vec::new(),
+        };
+        let err = check_partition_is_supported(
+            &partition(
+                1,
+                1 << 20,
+                1 << 30,
+                mjolnir_image::disk_layout::GUID_BASIC_DATA,
+            ),
+            Some(&v),
+            PartitionRole::Windows,
+            &locked,
+        )
+        .unwrap_err();
+
+        assert!(err.what().contains("BitLocker"));
+        assert!(err.what().contains("locked"));
+        // The operator is told what to do, and is never asked for a key.
+        assert!(err.next_step().contains("unlock"));
+        assert!(!err.next_step().contains("disable"));
+        assert!(!err.next_step().contains("turn off"));
+    }
+
+    /// An unlocked volume is backed up, not refused. This is the whole point of
+    /// the BitLocker work, so it has a test of its own.
+    #[test]
+    fn an_unlocked_bitlocker_volume_is_accepted() {
+        let v = volume(Some("C"), 0, 1 << 20, "NTFS");
+        let unlocked = PartitionEncryption {
+            encryption: Encryption::BitLockerUnlocked,
+            on_disk: mjolnir_ntfs::boot::VolumeSignature::BitLocker,
+            filesystem: Some("NTFS".to_owned()),
+            reported: None,
+            evidence: Vec::new(),
+        };
+        check_partition_is_supported(
+            &partition(
+                1,
+                1 << 20,
+                1 << 30,
+                mjolnir_image::disk_layout::GUID_BASIC_DATA,
+            ),
+            Some(&v),
+            PartitionRole::Windows,
+            &unlocked,
+        )
+        .expect("an unlocked BitLocker volume is supported");
+    }
+
+    /// Without administrator rights nothing can be read, and planning has to
+    /// carry on so the window can show what it found. The check runs again with
+    /// the rights it needs before anything is copied.
+    #[test]
+    fn an_undetermined_state_does_not_stop_planning() {
+        let v = volume(Some("C"), 0, 1 << 20, "NTFS");
+        let unknown = PartitionEncryption {
+            encryption: Encryption::Unknown,
+            on_disk: mjolnir_ntfs::boot::VolumeSignature::Unknown,
+            filesystem: Some("NTFS".to_owned()),
+            reported: None,
+            evidence: Vec::new(),
+        };
+        check_partition_is_supported(
+            &partition(
+                1,
+                1 << 20,
+                1 << 30,
+                mjolnir_image::disk_layout::GUID_BASIC_DATA,
+            ),
+            Some(&v),
+            PartitionRole::Windows,
+            &unknown,
+        )
+        .expect("an unreadable disk must not be mistaken for an unsupported one");
     }
 
     #[test]

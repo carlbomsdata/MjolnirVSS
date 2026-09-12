@@ -25,6 +25,8 @@ pub mod disks;
 pub mod system;
 #[cfg(windows)]
 pub mod volumes;
+#[cfg(windows)]
+pub mod wmi;
 
 pub use gpt::{GptHeader, GptPartitionEntry, ParsedGpt};
 
@@ -38,3 +40,5 @@ pub use disks::{describe_disk, enumerate_disks, PhysicalDisk, PhysicalPartition}
 pub use system::{describe_system, SystemSummary};
 #[cfg(windows)]
 pub use volumes::{enumerate_volumes, VolumeExtent, VolumeInfo};
+#[cfg(windows)]
+pub use wmi::{encryptable_volume, encryptable_volumes, EncryptableVolume};

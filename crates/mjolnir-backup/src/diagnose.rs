@@ -44,6 +44,7 @@ use mjolnir_core::exit::ExitCode;
 use mjolnir_ntfs::boot::{looks_like_file_record, NtfsBootSector, VolumeSignature};
 use mjolnir_storage::bitlocker::Encryption;
 use mjolnir_storage::device::Device;
+use mjolnir_storage::wmi::EncryptableVolume;
 
 /// What the diagnostic concluded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +109,11 @@ pub struct Diagnosis {
     pub on_disk_signature: VolumeSignature,
     /// What Windows reports the filesystem to be.
     pub reported_filesystem: Option<String>,
+    /// What `Win32_EncryptableVolume` reported, when it could be asked.
+    ///
+    /// Absent in Windows PE and on editions without a BitLocker provider, and
+    /// without administrator rights.
+    pub reported_state: Option<EncryptableVolume>,
     /// The encryption state worked out from those two.
     pub encryption: Encryption,
     /// The shadow copy device that was created, if one was.
@@ -147,6 +153,17 @@ impl Diagnosis {
             self.reported_filesystem
                 .as_deref()
                 .unwrap_or("no filesystem")
+        ));
+        out.push_str(&format!(
+            "BitLocker status:  {}\n",
+            match &self.reported_state {
+                Some(v) => format!(
+                    "protection status {}, {}",
+                    v.protection_status,
+                    v.describe_conversion()
+                ),
+                None => "not reported; Windows does not list this volume as encryptable".to_owned(),
+            }
         ));
         out.push_str(&format!(
             "Encryption:        {}\n",
@@ -253,6 +270,7 @@ pub fn diagnose_system_volume(cancel: &CancelToken) -> Result<Diagnosis> {
         partition_offset: partition.starting_offset,
         on_disk_signature: encryption_info.on_disk,
         reported_filesystem: encryption_info.filesystem.clone(),
+        reported_state: encryption_info.reported.clone(),
         encryption: encryption_info.encryption,
         snapshot_device: None,
         snapshot_signature: None,
@@ -418,6 +436,11 @@ mod tests {
             partition_offset: 122_683_392,
             on_disk_signature: VolumeSignature::BitLocker,
             reported_filesystem: Some("NTFS".to_owned()),
+            reported_state: Some(EncryptableVolume {
+                device_id: r"\\?\Volume{test}\".to_owned(),
+                protection_status: 1,
+                conversion_status: Some(1),
+            }),
             encryption,
             snapshot_device: Some(
                 "\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1".to_owned(),

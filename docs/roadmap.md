@@ -21,7 +21,9 @@ reliably.
   target's geometry, tested against virtual disks with byte for byte comparison.
 - The safety refusals, each with a test that tries to do the forbidden thing.
 - BitLocker: an unlocked volume is captured through its shadow copy, measured
-  rather than assumed, with a locked one refused.
+  rather than assumed, with a locked one refused. The state comes from
+  `Win32_EncryptableVolume`, the documented interface, corroborated by the
+  partition header.
 - The backup window and the recovery wizard.
 
 ---

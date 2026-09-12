@@ -6,7 +6,7 @@
 cargo test --workspace
 ```
 
-334 tests, no administrator rights, no real disks, no network. Everything that
+377 tests, no administrator rights, no real disks, no network. Everything that
 can be tested without hardware is tested this way, including the entire restore
 path, which runs against temporary files.
 
@@ -94,6 +94,7 @@ is the honest state of each.
 | # | Test | State |
 |---|---|---|
 | 1 | Backup on Windows 11 x64 | Discovery, planning and the shadow copy path proven on a BitLocker machine; a full live backup has not yet been run end to end |
+| 1b | BitLocker state read through the documented API | **Done.** `Win32_EncryptableVolume` queried on a real encrypted machine, agreeing with `manage-bde` |
 | 2 | Backup on Windows 10 x64 | Not done |
 | 3 | Backup with files changing during the run | Not done |
 | 4 | Common GPT layout: EFI, MSR, Windows, recovery | Proven against synthetic disks; not against a real machine end to end |

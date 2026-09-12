@@ -32,6 +32,20 @@ Those two possibilities produce opposite products, and the difference is not
 visible from the outside. Guessing would have been indefensible, so it was
 measured.
 
+The mechanism, once measured, is that `volsnap.sys` sits **above** `fvevol.sys`
+in the volume device stack, so a reader of a shadow copy is above the decryption
+layer:
+
+```text
+volsnap -> volume -> iorate -> fvevol -> volmgr
+```
+
+On this machine the disk class filters are `UpperFilters = {volsnap}` and
+`LowerFilters = {fvevol, iorate, rdyboost}`, which is the same statement from
+the registry side. The explanation is offered as the reason the result comes out
+the way it does; the result itself rests on the measurement below, not on the
+explanation.
+
 ---
 
 ## The measurement
@@ -66,8 +80,9 @@ Drive letter:      C:
 Partition offset:  122683392
 On the disk:       BitLocker encrypted
 Windows reports:   NTFS
+BitLocker status:  protection status 1, fully encrypted
 Encryption:        BitLocker, unlocked
-Shadow copy:       \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy29
+Shadow copy:       \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy31
 Through the copy:  NTFS
 
 NTFS structures read through the shadow copy
@@ -99,20 +114,72 @@ says why.
 
 An unlocked BitLocker volume is indistinguishable from plain NTFS when asked
 through the filesystem, because `GetVolumeInformationW` reports `NTFS` for both.
-Checking there alone would miss BitLocker entirely, which is why MjolnirVSS
-reads the partition itself.
+Checking there alone would miss BitLocker entirely.
 
-Combining the two answers separates the three states:
+Three sources are used, and all three are recorded in the log and in the
+diagnostic report.
 
-| First sector on the disk | Filesystem Windows reports | Conclusion |
-|---|---|---|
-| `NTFS` | NTFS | not encrypted |
-| `-FVE-FS-` | NTFS | **BitLocker, unlocked** |
-| `-FVE-FS-` | none, or RAW | **BitLocker, locked** |
+### 1. What Windows says
+
+`Win32_EncryptableVolume` is the interface Microsoft publishes for this question,
+and it is the primary source. Two of its properties are read, and none of its
+methods is called:
+
+| Property | Read as |
+|---|---|
+| `ProtectionStatus` | 0 off, 1 on, 2 unknown. Microsoft documents that 2 can be caused by the volume being in a locked state. |
+| `ConversionStatus` | 0 fully decrypted, 1 fully encrypted, 2 encrypting, 3 decrypting, 4 encryption paused, 5 decryption paused. For a locked volume it cannot be read at all. |
+
+The class lives in the `ROOT\CIMV2\Security\MicrosoftVolumeEncryption` WMI
+namespace, needs administrator rights, and is **absent** on Windows editions
+without BitLocker and inside Windows PE. An absent namespace is treated as an
+answer of "no BitLocker volumes here", not as a failure.
+
+On the development machine this returns exactly one volume, protection status 1
+and conversion status 1, agreeing with `manage-bde -status C:`.
+
+### 2. What the partition header says
+
+The partition first sector, read from the physical disk below the encryption
+filter, carries `-FVE-FS-` where a plain NTFS volume carries `NTFS`.
+
+**This is not a Microsoft documented structure.** It comes from the open source
+`libbde` project, which established it by reverse engineering. It is used here to
+corroborate the documented source, and as the only available source where WMI
+cannot answer, which inside Windows PE is always. It is never the sole basis for
+concluding that a volume is *un*encrypted.
+
+### 3. What the filesystem layer says
+
+Windows can see inside a BitLocker volume only while it is unlocked, so the
+filesystem it reports is really a lock state. `RAW`, or none at all, means it
+cannot see in.
+
+### Putting them together
+
+| `Win32_EncryptableVolume` | First sector on disk | Filesystem reported | Conclusion |
+|---|---|---|---|
+| absent, or protection 0 and conversion 0 | `NTFS` | NTFS | not encrypted |
+| protection 1, conversion 1 to 5 | `-FVE-FS-` | NTFS | **BitLocker, unlocked** |
+| protection 0, conversion 1, meaning suspended | `-FVE-FS-` | NTFS | **BitLocker, unlocked** |
+| protection 2, or conversion unreadable | `-FVE-FS-` | none, or RAW | **BitLocker, locked** |
+| not asked, as in Windows PE | `-FVE-FS-` | NTFS | **BitLocker, unlocked** |
+| not asked, as in Windows PE | `-FVE-FS-` | none, or RAW | **BitLocker, locked** |
+
+Where two sources disagree, the cautious answer wins: a volume whose header still
+carries a BitLocker signature is treated as encrypted at rest even when Windows
+reports otherwise, because the consequence of being wrong in that direction is a
+backup that quietly holds decrypted data without saying so.
 
 A locked volume is refused, because Windows itself cannot see inside it: a
 backup would be empty rather than merely encrypted. The message says to unlock
 the drive in Windows, and states that MjolnirVSS never asks for a recovery key.
+Microsoft takes the same position for its own products; the Azure Backup
+documentation lists a BitLocker locked volume as not supported, and says the
+volume must be unlocked before the backup starts.
+
+Every row of that table has a test. The decision is a pure function of the three
+observations, so it is exercised without a disk.
 
 ---
 
@@ -146,6 +213,10 @@ What is captured is the decrypted filesystem, so what is written back is a plain
 NTFS volume. The restored machine boots without BitLocker, and BitLocker can be
 turned on again afterwards from Windows, which re-encrypts in the background.
 
+This is not peculiar to MjolnirVSS. Microsoft documents the same outcome for its
+own server backup: after a successful full system restore, BitLocker has to be
+reactivated on the restored machine.
+
 MjolnirVSS does not claim to preserve BitLocker, and will not until a restored
 machine has actually been booted and checked. The restored disk will also not
 unlock against the original machine's TPM, because the encryption is simply not
@@ -165,9 +236,15 @@ does not enumerate protectors, and does not touch the TPM.
 **The recovery key is never read, stored or logged.** There is no code path in
 MjolnirVSS that obtains one.
 
-**BitLocker's state is never changed.** Nothing suspends, disables or decrypts a
-volume. The development machine's drive was still `Fully Encrypted, Protection
-On` after every test run.
+**BitLocker state is never changed.** Nothing suspends, disables or decrypts a
+volume. The development machine drive was still `Fully Encrypted, Protection On`
+after every test run, confirmed through both `manage-bde -status` and
+`Win32_EncryptableVolume`.
+
+**One thing the diagnostic does change**, and it is not BitLocker: releasing its
+temporary shadow copy can make the volume snapshot driver delete older shadow
+copies of the same volume. That is recorded, with the measurement, in
+[`vss-lifecycle.md`](vss-lifecycle.md).
 
 ---
 

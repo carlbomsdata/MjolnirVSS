@@ -52,6 +52,11 @@ copy, which presents it decrypted, so the backup captures an ordinary NTFS
 filesystem. This was established by measurement, not assumption; see
 [`bitlocker.md`](bitlocker.md) for the evidence and how to reproduce it.
 
+The state is read from `Win32_EncryptableVolume`, which is the interface
+Microsoft documents for it, corroborated by the partition header. Only the two
+status properties are read; none of the methods that handle key material is
+called.
+
 A **locked** volume is refused: Windows itself cannot see inside it, so a backup
 would be empty rather than encrypted.
 
