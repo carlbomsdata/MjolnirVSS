@@ -1,0 +1,11 @@
+# Portable release executables: statically link the C runtime so the Visual C++
+# Redistributable is not required, on a normal desktop or inside WinPE.
+#
+# build.target is set so cargo always separates host units (build scripts and
+# proc macros) from target units. Without it the crt-static flag below would also
+# be applied to proc-macro crates, which cannot be built that way.
+[build]
+target = "x86_64-pc-windows-msvc"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
