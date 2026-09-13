@@ -313,7 +313,12 @@ fn make_output_only(hwnd: HWND) {
     // The previous procedure is kept and called for every message this one does
     // not answer, which is what subclassing requires.
     unsafe {
-        let previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, output_only_proc as isize);
+        let replacement: WNDPROC = Some(output_only_proc);
+        let previous = SetWindowLongPtrW(
+            hwnd,
+            GWLP_WNDPROC,
+            std::mem::transmute::<WNDPROC, isize>(replacement),
+        );
         if previous != 0 {
             let _ = ORIGINAL_EDIT_PROC.set(previous);
         }
