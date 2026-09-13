@@ -262,7 +262,12 @@ const WM_MJOLNIR_SETTLE_FOCUS: u32 = 0x0400 + 0x40;
 const DM_GETDEFID: u32 = 0x0400;
 
 /// `DC_HASDEFID`, the high word of the reply saying the identifier is real.
-const DC_HASDEFID: u32 = 0x0001;
+///
+/// It is 0x534B, a magic number rather than a flag, and it was 0x0001 here for
+/// long enough to ship: with the wrong value Windows does not believe the reply,
+/// so Enter did nothing unless a button already had the keyboard. It looked like
+/// it worked, because the wizard puts the keyboard on a button.
+const DC_HASDEFID: u32 = 0x534B;
 
 thread_local! {
     /// The control Enter presses when the keyboard is not on a button.
@@ -591,6 +596,25 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
 
 #[cfg(test)]
 mod tests {
+
+    /// The reply to `DM_GETDEFID` has to carry `DC_HASDEFID` in its high word,
+    /// and that constant is a magic number, not a flag. It was `1` here for a
+    /// while, which Windows quietly did not believe: Enter then did nothing
+    /// unless a button already had the keyboard.
+    #[test]
+    fn the_default_button_reply_is_shaped_the_way_windows_expects() {
+        assert_eq!(
+            DC_HASDEFID, 0x534B,
+            "DC_HASDEFID is 0x534B; any other value makes the reply meaningless"
+        );
+        assert_eq!(DM_GETDEFID, 0x0400, "DM_GETDEFID is WM_USER + 0");
+
+        // The shape of the reply for a control with identifier 2004.
+        let id: i32 = 2004;
+        let reply = ((DC_HASDEFID as isize) << 16) | (id as isize & 0xFFFF);
+        assert_eq!(reply >> 16, DC_HASDEFID as isize);
+        assert_eq!(reply & 0xFFFF, id as isize);
+    }
     use super::*;
 
     /// A handler that records what it was told, so the trait's default methods

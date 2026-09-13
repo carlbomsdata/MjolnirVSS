@@ -693,7 +693,11 @@ impl RecoveryWindow {
         else {
             return;
         };
-        let backup_path = self.found[backup_index].path.clone();
+        // The set is taken as it stands, unlocked if a password was given.
+        // Re-opening it from its path inside the worker would throw the
+        // password away, and an encrypted restore would then fail partway
+        // through writing the disk, which is the worst possible moment.
+        let backup_set = self.found[backup_index].set.clone();
         let target = self.targets[target_index].clone();
         let typed = self.read_text(window, self.controls.confirm_edit);
 
@@ -723,7 +727,7 @@ impl RecoveryWindow {
 
         let worker_target = target.clone();
         self.worker = Some(Worker::start(move |progress, cancel| {
-            let set = mjolnir_image::BackupSet::open(&backup_path)?;
+            let set = backup_set;
             let mut disk = mjolnir_restore::WritableDisk::open(&worker_target)?;
             let mut outcome = mjolnir_restore::restore(
                 &set,
