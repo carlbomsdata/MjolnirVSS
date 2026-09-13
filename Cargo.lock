@@ -465,8 +465,6 @@ dependencies = [
  "mjolnir-vss",
  "serde_json",
  "tempfile",
- "windows",
- "zeroize",
 ]
 
 [[package]]
@@ -487,6 +485,8 @@ dependencies = [
  "blake3",
  "mjolnir-core",
  "serde",
+ "tempfile",
+ "windows",
  "zeroize",
 ]
 
@@ -627,6 +627,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "mjolnir-core",
+ "mjolnir-crypto",
  "mjolnir-image",
  "mjolnir-restore",
  "mjolnir-storage",
