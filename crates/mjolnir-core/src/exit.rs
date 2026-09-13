@@ -33,6 +33,26 @@ pub enum ExitCode {
 }
 
 impl ExitCode {
+    /// Every code, in numeric order.
+    ///
+    /// One list, so that adding a code cannot quietly miss the tests that
+    /// check the codes are unique and the documentation that publishes them.
+    /// They are a contract: `docs/automation.md` names them, and something
+    /// that calls this program decides what to do next by looking at them.
+    pub const ALL: [ExitCode; 11] = [
+        ExitCode::Success,
+        ExitCode::Failure,
+        ExitCode::Usage,
+        ExitCode::AccessDenied,
+        ExitCode::Unsupported,
+        ExitCode::VssFailure,
+        ExitCode::CorruptBackup,
+        ExitCode::Destination,
+        ExitCode::UnsafeTarget,
+        ExitCode::Cancelled,
+        ExitCode::Io,
+    ];
+
     /// The numeric value handed back to the operating system.
     pub const fn code(self) -> i32 {
         self as i32
@@ -78,20 +98,7 @@ mod tests {
 
     #[test]
     fn names_are_unique() {
-        let all = [
-            ExitCode::Success,
-            ExitCode::Failure,
-            ExitCode::Usage,
-            ExitCode::AccessDenied,
-            ExitCode::Unsupported,
-            ExitCode::VssFailure,
-            ExitCode::CorruptBackup,
-            ExitCode::Destination,
-            ExitCode::UnsafeTarget,
-            ExitCode::Cancelled,
-            ExitCode::Io,
-        ];
-        let mut names: Vec<&str> = all.iter().map(|e| e.name()).collect();
+        let mut names: Vec<&str> = ExitCode::ALL.iter().map(|e| e.name()).collect();
         names.sort_unstable();
         let before = names.len();
         names.dedup();

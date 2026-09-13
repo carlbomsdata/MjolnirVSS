@@ -274,10 +274,48 @@ pub fn run(cli: Cli) -> ExitCode {
     match result {
         Ok(code) => code,
         Err(e) => {
-            report_error(&e);
+            if cli.json {
+                report_error_as_json(&e);
+            } else {
+                report_error(&e);
+            }
             e.exit()
         }
     }
+}
+
+/// Prints a failure as JSON, for a caller that is not a person.
+///
+/// With `--json`, everything a command has to say goes to standard output as
+/// one JSON document. Without this, a failure said nothing there at all: the
+/// prose went to standard error and a script piping this into a parser got an
+/// empty stream and had to fall back to reading English. The exit code carries
+/// the same information and is the stable contract, but a caller should not
+/// have to choose between the two.
+///
+/// Both spellings of the outcome are included on purpose. `exit_code` is what
+/// the process returns; `exit_name` is the stable name in `docs/automation.md`,
+/// which is easier to read in a log and does not change when a number is added.
+pub fn report_error_as_json(e: &Error) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&error_as_json(e)).unwrap_or_default()
+    );
+}
+
+/// The document [`report_error_as_json`] prints.
+///
+/// Separate so the shape can be asserted on without capturing standard output.
+pub fn error_as_json(e: &Error) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "what": e.what(),
+            "why": e.why(),
+            "next_step": e.next_step(),
+            "exit_code": e.exit().code(),
+            "exit_name": e.exit().name(),
+        }
+    })
 }
 
 /// Prints an error the way the product promises: what, why, and what next.
@@ -1364,5 +1402,37 @@ mod tests {
         assert_eq!(&stamp[4..5], "-");
         assert_eq!(&stamp[7..8], "-");
         assert_eq!(&stamp[10..11], "_");
+    }
+    /// A failure has to be readable by the thing that called it.
+    ///
+    /// The exit code is the contract, but a caller that asked for JSON should
+    /// get JSON on the same stream whether the command worked or not.
+    #[test]
+    fn a_failure_is_a_json_document_too() {
+        let e = Error::new(
+            ExitCode::Destination,
+            "the backup destination has only 1.2 MiB free",
+            "a backup cannot fit in that",
+            "free up space on that drive",
+        );
+        let value = error_as_json(&e);
+        let error = &value["error"];
+        assert_eq!(error["exit_code"], 7);
+        assert_eq!(error["exit_name"], "destination");
+        assert!(error["what"].as_str().unwrap().contains("1.2 MiB"));
+        assert!(error["why"].as_str().is_some());
+        assert!(error["next_step"].as_str().is_some());
+    }
+
+    /// Every exit code has to survive the trip, or a caller matching on the
+    /// name would silently stop matching when one was added.
+    #[test]
+    fn every_exit_code_names_itself_in_json() {
+        for code in ExitCode::ALL {
+            let e = Error::new(code, "what", "why", "next");
+            let value = error_as_json(&e);
+            assert_eq!(value["error"]["exit_code"], code.code());
+            assert_eq!(value["error"]["exit_name"], code.name());
+        }
     }
 }

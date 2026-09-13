@@ -151,17 +151,45 @@ fn run(cli: Cli) -> ExitCode {
     match result {
         Ok(code) => code,
         Err(e) => {
-            eprintln!();
-            eprintln!("MjolnirVSS could not finish.");
-            eprintln!();
-            eprintln!("  What happened: {}", e.what());
-            eprintln!("  Why it matters: {}", e.why());
-            eprintln!("  What to do next: {}", e.next_step());
-            eprintln!();
-            eprintln!("  (exit code {} - {})", e.exit().code(), e.exit().name());
+            if cli.json {
+                // With --json everything goes to standard output as one
+                // document, failures included, so a caller parsing the stream
+                // never has to fall back to reading English off stderr.
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&error_as_json(&e)).unwrap_or_default()
+                );
+            } else {
+                eprintln!();
+                eprintln!("MjolnirVSS could not finish.");
+                eprintln!();
+                eprintln!("  What happened: {}", e.what());
+                eprintln!("  Why it matters: {}", e.why());
+                eprintln!("  What to do next: {}", e.next_step());
+                eprintln!();
+                eprintln!("  (exit code {} - {})", e.exit().code(), e.exit().name());
+            }
             e.exit()
         }
     }
+}
+
+/// A failure as one JSON document.
+///
+/// Deliberately the same shape as the backup application's, and deliberately
+/// not shared with it: this binary must not link `mjolnir-cli`, which reaches
+/// `vssapi.dll` through the backup engine. A recovery application that will not
+/// start in Windows PE is worse than eight duplicated lines.
+fn error_as_json(e: &Error) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "what": e.what(),
+            "why": e.why(),
+            "next_step": e.next_step(),
+            "exit_code": e.exit().code(),
+            "exit_name": e.exit().name(),
+        }
+    })
 }
 
 /// Supplies the password when the backup has one.
@@ -695,5 +723,37 @@ mod tests {
     fn inspect_backup_parses() {
         let cli = Cli::try_parse_from(["r", "inspect-backup", "E:\\backup"]).unwrap();
         assert!(matches!(cli.command, Command::InspectBackup { .. }));
+    }
+    /// A failure has to be readable by the thing that called it.
+    ///
+    /// The exit code is the contract, but a caller that asked for JSON should
+    /// get JSON on the same stream whether the command worked or not.
+    #[test]
+    fn a_failure_is_a_json_document_too() {
+        let e = Error::new(
+            ExitCode::Destination,
+            "the backup destination has only 1.2 MiB free",
+            "a backup cannot fit in that",
+            "free up space on that drive",
+        );
+        let value = error_as_json(&e);
+        let error = &value["error"];
+        assert_eq!(error["exit_code"], 7);
+        assert_eq!(error["exit_name"], "destination");
+        assert!(error["what"].as_str().unwrap().contains("1.2 MiB"));
+        assert!(error["why"].as_str().is_some());
+        assert!(error["next_step"].as_str().is_some());
+    }
+
+    /// Every exit code has to survive the trip, or a caller matching on the
+    /// name would silently stop matching when one was added.
+    #[test]
+    fn every_exit_code_names_itself_in_json() {
+        for code in ExitCode::ALL {
+            let e = Error::new(code, "what", "why", "next");
+            let value = error_as_json(&e);
+            assert_eq!(value["error"]["exit_code"], code.code());
+            assert_eq!(value["error"]["exit_name"], code.name());
+        }
     }
 }
