@@ -319,6 +319,12 @@ fn cmd_inspect(cli: &Cli) -> Result<ExitCode> {
             for w in &plan.warnings {
                 println!("  Note: {w}");
             }
+            // The inspect command exists to tell an operator what would
+            // happen, so it prints the shadow copy figures in full rather
+            // than folding them away.
+            for line in plan.snapshot_preflight.details() {
+                println!("  {line}");
+            }
             Ok(ExitCode::Success)
         }
         Err(e) => {
@@ -379,6 +385,11 @@ fn cmd_backup(
         );
         for w in &plan.warnings {
             eprintln!("Note: {w}");
+        }
+        if plan.snapshot_preflight.warning().is_some() {
+            for line in plan.snapshot_preflight.details() {
+                eprintln!("  {line}");
+            }
         }
         eprintln!();
     }

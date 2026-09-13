@@ -129,6 +129,11 @@ pub struct BackupPlan {
     pub tail_bytes: u64,
     /// The volumes that have to be shadow copied, as GUID paths.
     pub snapshot_volumes: Vec<String>,
+    /// What taking those shadow copies may cost the machine's restore points.
+    ///
+    /// Read only, and never a reason to refuse a backup. See
+    /// [`crate::preflight`] for the behaviour it exists to warn about.
+    pub snapshot_preflight: crate::preflight::SnapshotPreflight,
     /// Total bytes that will be read from the source.
     pub source_bytes: u64,
     /// Things worth telling the operator that do not stop the backup.
@@ -230,10 +235,12 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         let capture = if request.limit.is_preview() {
             CaptureMethod::Preview
         } else if is_ntfs {
-            // Used block imaging arrives in the next milestone; until then a
-            // shadow copy is read from end to end, which is slower but never
-            // wrong.
-            CaptureMethod::VssRaw
+            // Asking the volume which clusters are in use, and reading only
+            // those. If the volume will not say, the capture falls back to
+            // reading the whole thing and records that it had to; the decision
+            // cannot be made here, because it needs the shadow copy that does
+            // not exist yet.
+            CaptureMethod::VssUsedBlocks
         } else {
             CaptureMethod::RawFull
         };
@@ -302,6 +309,25 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
 
     let contains_decrypted_data = partitions.iter().any(|p| p.encrypted_at_rest);
 
+    // Taking a shadow copy can cost the machine its restore points. Nothing
+    // here stops the backup; it decides what the operator is told first.
+    let to_snapshot: Vec<_> = snapshot_volumes
+        .iter()
+        .map(|guid| {
+            let volume = volumes.iter().find(|v| v.guid_path == *guid);
+            crate::preflight::VolumeToSnapshot {
+                guid_path: guid.clone(),
+                drive_letter: volume.and_then(|v| v.drive_letter()),
+                free_bytes: volume.map(|v| v.free_bytes).unwrap_or(0),
+            }
+        })
+        .collect();
+    let snapshot_preflight = crate::preflight::inspect(&to_snapshot)
+        .unwrap_or_else(|_| crate::preflight::SnapshotPreflight::unknown());
+    if let Some(warning) = snapshot_preflight.warning() {
+        warnings.push(warning.to_owned());
+    }
+
     if request.limit.is_preview() {
         warnings.push(
             "This is a preview run: only the first part of each partition is captured, and the result cannot be restored."
@@ -317,6 +343,7 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         head_bytes,
         tail_bytes,
         snapshot_volumes,
+        snapshot_preflight,
         source_bytes,
         contains_decrypted_data,
         warnings,

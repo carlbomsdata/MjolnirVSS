@@ -541,6 +541,23 @@ impl BackupWindow {
             }
         };
 
+        // Taking a shadow copy can cost the machine its restore points. One
+        // sentence, two buttons, and the figures folded away behind Show
+        // details.
+        if let Some(warning) = plan.snapshot_preflight.warning() {
+            let went_ahead = message_box::confirm_with_details(
+                window.raw(),
+                "MjolnirVSS",
+                warning,
+                "MjolnirVSS removes only the snapshot it creates, but Windows manages the space they share and may remove older ones to reclaim it. Your files are not affected.",
+                &plan.snapshot_preflight.details().join("\r\n"),
+                "Continue",
+            );
+            if !went_ahead {
+                return;
+            }
+        }
+
         self.plan = Some(plan.clone());
         self.finished = None;
         sys::set_text(self.controls.stage, "Starting...");

@@ -20,6 +20,7 @@ below is a real check with a test behind it, and every one explains itself.
 | Sector sizes | 512 native and 512e (512 logical / 4096 physical); 4Kn is implemented and unit tested but has not been exercised on real hardware |
 | Destination | A local NTFS volume on a different physical disk, usually an external drive |
 | Backup kind | Full |
+| What is captured from an NTFS volume | The clusters the filesystem says are in use, read from the shadow copy, plus the boot sectors and both copies of the master file table. Volumes that will not report their allocation are captured whole, and the manifest records that they were |
 | Restore target | A blank disk at least as large as the layout requires, with the same logical sector size |
 
 ---
@@ -76,9 +77,6 @@ BitLocker's state.
 
 These are absent rather than refused; see [`roadmap.md`](roadmap.md).
 
-- Used block imaging. Today a backup copies every byte of a volume, including
-  free space, which makes it larger and slower than it needs to be. The format
-  already supports it and the verifier already honours it.
 - Restoring individual files from a backup.
 - Creating recovery media.
 - Repairing the UEFI boot configuration after a restore.

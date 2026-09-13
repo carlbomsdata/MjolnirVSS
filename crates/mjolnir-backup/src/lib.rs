@@ -14,6 +14,7 @@ pub mod capture;
 pub mod diagnose;
 pub mod log;
 pub mod plan;
+pub mod preflight;
 pub mod run;
 
 pub use capture::{capture_disk, CaptureSources, CaptureSpec, PartitionCapture};

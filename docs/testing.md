@@ -6,7 +6,7 @@
 cargo test --workspace
 ```
 
-377 tests, no administrator rights, no real disks, no network. Everything that
+439 tests, no administrator rights, no real disks, no network. Everything that
 can be tested without hardware is tested this way, including the entire restore
 path, which runs against temporary files.
 
@@ -62,6 +62,8 @@ gate, against virtual machines driven by hand.
 | Format documents | Schema validation, version handling, forward compatibility, cross document agreement |
 | Block store | Round trip, deduplication, corruption, truncation, decompression bounds, temporary file cleanup |
 | Capture | Shared with the Windows engine, exercised against synthetic disks |
+| Used block imaging | Bitmap decoding, pagination, geometry refusals; and end to end capture, verify and restore against synthetic NTFS volumes whose free space holds garbage, so a capture that read it would be caught |
+| Restore point preflight | The whole decision table, and the wording of the warning |
 | Restore | Round trip against virtual disks, byte compared |
 | Safety refusals | Every one has a test that tries to do the forbidden thing |
 | Windows discovery | Runs against whatever the machine actually has, asserting only invariants |
@@ -95,6 +97,8 @@ is the honest state of each.
 |---|---|---|
 | 1 | Backup on Windows 11 x64 | Discovery, planning and the shadow copy path proven on a BitLocker machine; a full live backup has not yet been run end to end |
 | 1b | BitLocker state read through the documented API | **Done.** `Win32_EncryptableVolume` queried on a real encrypted machine, agreeing with `manage-bde` |
+| 1c | Used block imaging against a real NTFS volume | Not done. Proven against synthetic volumes only |
+| 1d | Restore point preflight on a real machine | **Done.** `MjolnirVSS.exe inspect` reported the machine's shadow copy storage and restore point count correctly |
 | 2 | Backup on Windows 10 x64 | Not done |
 | 3 | Backup with files changing during the run | Not done |
 | 4 | Common GPT layout: EFI, MSR, Windows, recovery | Proven against synthetic disks; not against a real machine end to end |

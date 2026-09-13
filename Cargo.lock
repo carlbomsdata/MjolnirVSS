@@ -331,6 +331,7 @@ dependencies = [
  "mjolnir-backup",
  "mjolnir-core",
  "mjolnir-image",
+ "mjolnir-ntfs",
  "mjolnir-restore",
  "mjolnir-storage",
  "mjolnir-testkit",
@@ -379,6 +380,7 @@ version = "0.1.0"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
+ "mjolnir-ntfs",
  "mjolnir-storage",
  "serde_json",
  "tempfile",

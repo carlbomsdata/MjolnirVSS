@@ -24,6 +24,11 @@ reliably.
   rather than assumed, with a locked one refused. The state comes from
   `Win32_EncryptableVolume`, the documented interface, corroborated by the
   partition header.
+- Used block imaging: the NTFS allocation bitmap is read from the shadow copy
+  and only the clusters in use are captured, with a recorded fallback to copying
+  the whole volume where that cannot be established.
+- A warning before a backup when taking a shadow copy may cost the machine its
+  restore points, which was measured rather than anticipated.
 - The backup window and the recovery wizard.
 
 ---
@@ -53,29 +58,19 @@ saying the restore succeeded.
 Its imports contain nothing Windows PE lacks, which is evidence, not proof. It
 has to be booted and run.
 
-### 4. Used block imaging
+### 4. File recovery
 
-Today a backup copies every byte of a volume, including free space. Reading the
-NTFS allocation bitmap through the shadow copy would skip the free space, making
-backups substantially smaller and faster.
-
-The format already supports it, the verifier already honours the resulting gaps,
-and the restore path already handles a sparse stream. What is missing is the NTFS
-reader, which is shared with item 5.
-
-### 5. File recovery
-
-Browse a backup's volumes read only and extract files. Needs the same NTFS reader
-as item 4, so the two arrive together. Designed in
+Browse a backup's volumes read only and extract files. Needs a master file table
+reader, which is the part of NTFS used block imaging did not need. Designed in
 [`file-recovery.md`](file-recovery.md).
 
-### 6. Recovery media creation
+### 5. Recovery media creation
 
 Build a bootable USB from the recovery image already on the machine. ISO output
 only when the Windows ADK is present, because `oscdimg.exe` cannot be
 redistributed. Designed in [`recovery-media.md`](recovery-media.md).
 
-### 7. Controlled hardware validation
+### 6. Controlled hardware validation
 
 A restore onto a real replacement disk in a real machine, done deliberately, with
 the result recorded.
@@ -89,7 +84,7 @@ the result recorded.
 - **Incremental backups.** The format was built for this. Blocks are content
   addressed and cut on stable boundaries, so an unchanged region produces the
   same block, and `chunk_store.root` is a field so several backups of a machine
-  can share one store. Needs item 4 first.
+  can share one store.
 - **Preserving BitLocker across a restore.** Backing up an unlocked BitLocker
   volume works today, but the restored disk comes back unencrypted. Putting the
   encryption back automatically is a separate piece of work, and is behind the

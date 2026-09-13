@@ -36,6 +36,10 @@ onto a blank replacement disk after the original has failed.
   recovery partition. A partition is never silently left out; if one cannot be
   read, the backup fails rather than quietly producing a disk that will not
   start.
+- **Free space is not copied.** MjolnirVSS asks the filesystem which clusters are
+  in use and reads only those, so a half empty drive makes a half sized backup. A
+  volume that will not answer is copied whole instead, and the backup records
+  that it had to.
 - **The backup is verified before it is called a backup.** Every stored piece is
   read back, decompressed and checked against its BLAKE3 checksum. Only then is
   the completion marker written. A backup that was interrupted is never reported
@@ -52,6 +56,8 @@ onto a blank replacement disk after the original has failed.
 |---|---|
 | Consistent live backup using VSS | **Implemented**, proven against a real Windows 11 machine |
 | Capturing the full GPT layout, EFI, MSR, Windows and recovery partitions | **Implemented**, tested against synthetic disks |
+| Used block imaging: skipping free space on NTFS volumes | **Implemented**, tested end to end against synthetic NTFS volumes; not yet run against a real Windows volume |
+| Warning before a backup may cost you restore points | **Implemented and measured** on a real machine |
 | Verification: decompress and checksum every block | **Implemented and tested**, including against deliberately damaged backups |
 | Restoring onto a blank disk | **Implemented**, tested against virtual disks only |
 | Rebuilding the partition table on the replacement disk | **Implemented**, tested against virtual disks only |
@@ -80,6 +86,22 @@ onto a blank replacement disk after the original has failed.
 dynamic disks, Storage Spaces, software RAID, ReFS system volumes, machines that
 boot in legacy BIOS mode, Windows spread across several disks, and disks with an
 untested sector size.
+
+### Restore points
+
+Taking a shadow copy can cost you older ones. Windows keeps a volume's shadow
+copies in one pool and can only release space from the oldest end, so when
+MjolnirVSS removes the temporary snapshot it took, Windows sometimes removes
+older ones first to reclaim the space. This was measured on a real machine, and
+it happens to any program that takes a snapshot, not only this one.
+
+MjolnirVSS removes only the snapshot it created, by its own identifier. It says
+so before the backup starts when there is anything to lose, shows the figures
+behind **Show details**, and does not claim your restore points will survive,
+because it cannot.
+
+Your files are not affected. See
+[`docs/vss-lifecycle.md`](docs/vss-lifecycle.md).
 
 ### BitLocker
 

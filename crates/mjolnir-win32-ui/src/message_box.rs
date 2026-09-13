@@ -8,6 +8,10 @@
 use mjolnir_core::error::Error;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Controls::{
+    TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON,
+    TDF_EXPAND_FOOTER_AREA, TDF_POSITION_RELATIVE_TO_WINDOW, TD_WARNING_ICON,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_ICONERROR, MB_ICONQUESTION, MB_ICONWARNING, MB_OK, MB_YESNO,
     MESSAGEBOX_RESULT, MESSAGEBOX_STYLE,
@@ -53,6 +57,82 @@ pub fn warn(parent: HWND, title: &str, message: &str) {
 /// Asks a yes or no question. Returns true for yes.
 pub fn confirm(parent: HWND, title: &str, message: &str) -> bool {
     show(parent, title, message, MB_ICONQUESTION | MB_YESNO) == IDYES
+}
+
+/// A question with the technical part folded away.
+///
+/// The simple interface shows one sentence and two buttons. Everything an
+/// operator might want to check is behind "Show details", which is Windows'
+/// own expandable section rather than a second dialog.
+///
+/// Returns true when the operator chose to go ahead.
+pub fn confirm_with_details(
+    parent: HWND,
+    title: &str,
+    instruction: &str,
+    content: &str,
+    details: &str,
+    go_ahead: &str,
+) -> bool {
+    const GO_AHEAD_ID: i32 = 1000;
+
+    let title_w = wide(title);
+    let instruction_w = wide(instruction);
+    let content_w = wide(content);
+    let details_w = wide(details);
+    let go_ahead_w = wide(go_ahead);
+    let expand_w = wide("Hide details");
+    let collapse_w = wide("Show details");
+
+    let buttons = [TASKDIALOG_BUTTON {
+        nButtonID: GO_AHEAD_ID,
+        pszButtonText: PCWSTR(go_ahead_w.as_ptr()),
+    }];
+
+    let mut config = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+        hwndParent: parent,
+        dwFlags: TDF_EXPAND_FOOTER_AREA | TDF_POSITION_RELATIVE_TO_WINDOW,
+        dwCommonButtons: TDCBF_CANCEL_BUTTON,
+        pszWindowTitle: PCWSTR(title_w.as_ptr()),
+        pszMainInstruction: PCWSTR(instruction_w.as_ptr()),
+        pszContent: PCWSTR(content_w.as_ptr()),
+        cButtons: buttons.len() as u32,
+        pButtons: buttons.as_ptr(),
+        nDefaultButton: GO_AHEAD_ID,
+        pszExpandedInformation: PCWSTR(details_w.as_ptr()),
+        pszExpandedControlText: PCWSTR(expand_w.as_ptr()),
+        pszCollapsedControlText: PCWSTR(collapse_w.as_ptr()),
+        ..Default::default()
+    };
+    config.Anonymous1.pszMainIcon = TD_WARNING_ICON;
+
+    let mut pressed = 0i32;
+    // SAFETY: every string and the button array are locals that outlive the
+    // call, and `config` points only at them. `pressed` is a live local the
+    // call writes the chosen button into. The dialog is modal, so nothing here
+    // is freed while it is on screen.
+    let shown = unsafe { TaskDialogIndirect(&config, Some(&mut pressed), None, None) };
+
+    match shown {
+        Ok(()) => pressed == GO_AHEAD_ID,
+        Err(_) => {
+            // Older or cut down Windows builds may not have the task dialog.
+            // The question still has to be asked, so it falls back to a plain
+            // one carrying the same text.
+            confirm(
+                parent,
+                title,
+                &format!(
+                    "{instruction}
+
+{content}
+
+{details}"
+                ),
+            )
+        }
+    }
 }
 
 fn show(parent: HWND, title: &str, message: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
