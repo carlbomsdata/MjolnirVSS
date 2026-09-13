@@ -12,6 +12,7 @@ members = [
     "crates/mjolnir-files",
     "crates/mjolnir-win32-ui",
     "crates/mjolnir-cli",
+    "crates/mjolnir-crypto",
     "crates/mjolnir-testkit",
     "apps/mjolnirvss",
     "apps/mjolnirvss-restore",
@@ -38,11 +39,18 @@ mjolnir-media = { path = "crates/mjolnir-media" }
 mjolnir-files = { path = "crates/mjolnir-files" }
 mjolnir-win32-ui = { path = "crates/mjolnir-win32-ui" }
 mjolnir-cli = { path = "crates/mjolnir-cli" }
+mjolnir-crypto = { path = "crates/mjolnir-crypto" }
 mjolnir-testkit = { path = "crates/mjolnir-testkit" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 blake3 = "1"
+# Cryptography, all from RustCrypto. Nothing here is written by this project:
+# the password becomes a key with Argon2id, and chunks are sealed with
+# AES-256-GCM, both used through their own crates in the documented way.
+argon2 = "0.5"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["derive"] }
 zstd = "0.13"
 clap = { version = "4", features = ["derive"] }
 windows = "0.62"
