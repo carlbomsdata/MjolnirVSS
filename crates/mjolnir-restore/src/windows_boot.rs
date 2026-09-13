@@ -206,10 +206,6 @@ pub fn roles_in_order(roles: &[PartitionRole]) -> (Option<usize>, Option<usize>,
     )
 }
 
-/// Looks at a restored disk and repairs its boot configuration if it needs it.
-///
-/// Returns what was found, what was changed, and what was true afterwards.
-/// Repairing a disk that did not need it is not an error and changes nothing.
 #[cfg(windows)]
 /// Looks at a restored disk's boot configuration and reports what a repair
 /// would do, without changing anything.
@@ -271,6 +267,10 @@ pub fn inspect_disk(disk_number: u32) -> Result<(BootRepairReport, BootDecision)
     Ok((report, decision))
 }
 
+/// Looks at a restored disk and repairs its boot configuration if it needs it.
+///
+/// Returns what was found, what was changed, and what was true afterwards.
+/// Repairing a disk that did not need it is not an error and changes nothing.
 pub fn repair_disk(disk_number: u32) -> Result<BootRepairReport> {
     let mut report = BootRepairReport::default();
 
