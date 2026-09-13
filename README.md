@@ -63,7 +63,7 @@ onto a blank replacement disk after the original has failed.
 
 | Feature | State |
 |---|---|
-| Consistent live backup using VSS | **Implemented**, proven against a real Windows 11 machine |
+| Consistent live backup using VSS | **Implemented**, proven against a real Windows 11 machine, encrypted and not |
 | Capturing the full GPT layout, EFI, MSR, Windows and recovery partitions | **Implemented**, tested against synthetic disks |
 | Used block imaging: skipping free space on NTFS volumes | **Implemented**, proven on a real Windows volume: 14.2 GiB read out of a 62.8 GiB partition, and the result restored and booted |
 | Warning before a backup may cost you restore points | **Implemented and measured** on a real machine |
@@ -128,7 +128,10 @@ Two things follow, and MjolnirVSS says both rather than leaving them implied:
   BitLocker or by MjolnirVSS. Look after the backup drive as carefully as the
   computer.
 - **A restored disk comes back unencrypted.** BitLocker protection does not carry
-  over. You can turn it on again after restoring.
+  over, and this has been checked rather than assumed: a fully encrypted machine
+  was backed up, restored and started, and the restored volume reported itself
+  fully decrypted with no key protectors at all. Turn BitLocker on again after
+  restoring.
 
 MjolnirVSS never reads, stores or logs a recovery key, and never changes
 BitLocker's state.

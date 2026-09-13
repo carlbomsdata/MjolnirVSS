@@ -197,6 +197,7 @@ On 13 September 2026, in one run:
 | A restore onto a blank disk | 14.9 GiB written, four partitions, driven through the wizard with Tab and Enter |
 | **The restored Windows starting** | **It started, unaided.** No boot repair was needed |
 | Boot repair, by needing it | `\EFI\Microsoft` was deleted from the restored EFI partition; the machine then failed with `0xc000000f`, and `repair-boot --disk 0` is what made it start again |
+| A BitLocker machine, all the way round | BitLocker turned on with a password and no TPM, fully encrypted; backed up live with used block imaging working through the shadow copy; restored onto a blank disk; **started with no password prompt**, because the restored volume is not encrypted; 12 of 12 files matched |
 | The same backup onto a larger disk | Restored onto a blank 96 GiB disk from the command line: four partitions with the same type and unique identifiers, offsets and sizes as before, 32.0 GiB left unallocated at the end, 12 of 12 files matched, and it booted |
 | The restored machine, checked | 12 of 12 files matched by hash; every partition kept its type GUID, unique GUID, offset and size; the EFI partition held `bootmgfw.efi`, `bootx64.efi` and the BCD; the boot entry named `winload.efi`; Windows RE was still registered at `harddisk0\partition4` |
 

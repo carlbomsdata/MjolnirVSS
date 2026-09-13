@@ -248,13 +248,29 @@ copies of the same volume. That is recorded, with the measurement, in
 
 ---
 
-## Still unproven
+## The whole cycle, done
 
-The measurement above establishes that the data captured from an unlocked
-BitLocker volume is an ordinary NTFS filesystem. It does **not** establish that a
-machine restored from such a backup boots. That needs the virtual machine boot
-test, which has not been run.
+On 13 September 2026 the measurement above was repeated on a second machine and
+followed through to a restored Windows that starts. In a disposable virtual
+machine with no TPM, BitLocker was turned on for the Windows volume with a
+password protector and left to encrypt fully.
 
-Until it has, a backup of a BitLocker machine is in exactly the same position as
-a backup of an unencrypted one: verified as internally sound, not yet proven
-restorable.
+| | |
+|---|---|
+| `diagnose-bitlocker` on that machine | The partition's first sector on the disk said `-FVE-FS-`; through a shadow copy the same volume said `NTFS`, with a consistent boot sector and a real file record where the boot sector said the master file table was. The shadow copy was released |
+| What MjolnirVSS said before backing up | "Partition 3 (Windows) is protected by BitLocker. It is unlocked, so the backup will contain a readable copy of it. The backup itself is not encrypted." |
+| The backup | Used block imaging worked through the shadow copy: 6,662,896 of 16,460,799 clusters across 12,862 extents. That the allocation bitmap could be read at all is another way of saying the shadow copy is decrypted. Verified, and a copy with a chunk removed was refused |
+| The restore | Onto a blank disk, from recovery media |
+| Starting it | **It booted, and asked for no password**, because what was restored is not encrypted |
+| The restored volume | `VolumeStatus: FullyDecrypted`, `ProtectionStatus: Off`, `EncryptionPercentage: 0`, and **no key protectors at all** |
+| The files | 12 of 12 matched the hashes taken when they were made |
+
+So a BitLocker machine can be backed up and restored, and **the protection does
+not come back with it.** The restored disk is an ordinary unencrypted Windows.
+That is not a defect to be fixed quietly later: it is what backing up through a
+shadow copy means, it is said before the backup starts, and anyone restoring a
+BitLocker machine has to turn BitLocker on again afterwards.
+
+The recovery key was not read, asked for, or stored at any point in this. The
+test machine's own password and recovery password were written to its backup
+drive, never to this repository, and are destroyed with the machine.
