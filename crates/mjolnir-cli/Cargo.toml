@@ -15,7 +15,6 @@ mjolnir-backup = { workspace = true }
 mjolnir-media = { workspace = true }
 mjolnir-files = { workspace = true }
 mjolnir-crypto = { workspace = true }
-zeroize = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 
@@ -24,4 +23,3 @@ tempfile = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 mjolnir-vss = { workspace = true }
-windows = { workspace = true, features = ["Win32_System_Console"] }

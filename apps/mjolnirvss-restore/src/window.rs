@@ -119,6 +119,22 @@ impl Step {
 
 #[cfg(test)]
 mod focus_tests {
+
+    /// An encrypted backup cannot be restored from this window yet, so the
+    /// message has to say where it *can* be done. Telling somebody "no" without
+    /// telling them how is how a recovery tool loses the one user it has.
+    #[test]
+    fn the_encrypted_backup_message_says_what_to_do_instead() {
+        let m = super::encrypted_backup_message();
+        assert!(m.contains("encrypted"), "{m}");
+        assert!(m.contains("command prompt"), "{m}");
+        assert!(
+            m.contains(super::RECOVERY_EXE_PATH),
+            "it must name the program to run: {m}"
+        );
+        assert!(m.contains("restore"), "{m}");
+        assert!(m.contains("list-disks"), "and how to find the disk: {m}");
+    }
     use super::{button_row, Focus, Step};
 
     /// No two buttons a step shows may share a pixel. One drawn over another
@@ -266,6 +282,25 @@ pub struct RecoveryWindow {
     worker: Option<Worker<RestoreOutcome>>,
     finished: Option<std::result::Result<RestoreOutcome, Error>>,
 }
+
+/// What to tell somebody who chose an encrypted backup in the window.
+///
+/// Built as one function so the path in it is written once and can be tested.
+fn encrypted_backup_message() -> String {
+    let mut m = String::new();
+    m.push_str("That backup is encrypted, and this window cannot ask for a password yet.");
+    m.push_str("\n\n");
+    m.push_str("Restore it from the command prompt behind this window:");
+    m.push_str("\n\n  ");
+    m.push_str(RECOVERY_EXE_PATH);
+    m.push_str(" restore <backup folder> --target <disk>");
+    m.push_str("\n\n");
+    m.push_str("It asks for the password. Run list-disks first to see the disks.");
+    m
+}
+
+/// Where the recovery application lives on its own media.
+const RECOVERY_EXE_PATH: &str = r"X:\MjolnirVSS\MjolnirVSS.Restore.exe";
 
 /// Every step, so a test can walk all of them and none is forgotten.
 #[cfg(test)]
@@ -695,6 +730,18 @@ impl RecoveryWindow {
                         "MjolnirVSS Recovery",
                         "That backup cannot be restored. It was interrupted when it was taken, \
                          or it did not pass its check.\n\nChoose a different one.",
+                    );
+                    return;
+                }
+                // This window cannot ask for a password yet. Saying so here is
+                // the difference between a limitation and a betrayal: the
+                // alternative is erasing the target disk and only then finding
+                // out that the backup cannot be opened.
+                if self.found[index].set.is_encrypted() {
+                    message_box::warn(
+                        window.raw(),
+                        "MjolnirVSS Recovery",
+                        &encrypted_backup_message(),
                     );
                     return;
                 }

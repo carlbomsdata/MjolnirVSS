@@ -34,13 +34,22 @@ impl FoundBackup {
         } else {
             "NOT RESTORABLE"
         };
+        // Whether it needs a password belongs in the list, not in a failure
+        // three screens later. Somebody in a recovery environment with several
+        // backups has to be able to see which ones they can actually open.
+        let sealed = if self.set.is_encrypted() {
+            "  [encrypted]"
+        } else {
+            ""
+        };
         format!(
-            "{}  -  {}  -  {}  -  {}  [{}]",
+            "{}  -  {}  -  {}  -  {}  [{}]{}",
             m.backup.name.as_str(),
             m.source.computer_name,
             m.backup.created_utc,
             mjolnir_core::progress::format_bytes(m.stats.stored_bytes),
-            state
+            state,
+            sealed
         )
     }
 

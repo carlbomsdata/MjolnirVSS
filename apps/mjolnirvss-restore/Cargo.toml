@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 mjolnir-core = { workspace = true }
 mjolnir-image = { workspace = true }
+mjolnir-crypto = { workspace = true }
 mjolnir-storage = { workspace = true }
 mjolnir-restore = { workspace = true }
 clap = { workspace = true }

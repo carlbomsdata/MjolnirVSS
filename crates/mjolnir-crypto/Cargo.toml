@@ -14,3 +14,9 @@ blake3 = { workspace = true }
 argon2 = { workspace = true }
 aes-gcm = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_Console"] }

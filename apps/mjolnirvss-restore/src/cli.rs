@@ -34,6 +34,13 @@ pub struct Cli {
     /// Print machine readable output instead of prose.
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Read the password for an encrypted backup from this file.
+    ///
+    /// Without it, an encrypted backup is asked about at the console. Never an
+    /// argument: arguments are visible to anything that can list processes.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub password_file: Option<PathBuf>,
 }
 
 /// The available commands.
@@ -153,6 +160,23 @@ fn run(cli: Cli) -> ExitCode {
             e.exit()
         }
     }
+}
+
+/// Supplies the password when the backup has one.
+///
+/// A backup that is not encrypted is never asked about, so nothing changes for
+/// anybody who does not use encryption. An encrypted one cannot be restored
+/// without this, which is the whole reason the recovery application needs it:
+/// a backup that can be made but not recovered is worse than none.
+fn unlock_if_needed(cli: &Cli, set: &mut BackupSet) -> Result<()> {
+    if !set.is_encrypted() {
+        return Ok(());
+    }
+    let source = mjolnir_crypto::password::PasswordSource {
+        file: cli.password_file.clone(),
+    };
+    let password = source.read("Password for this backup: ")?;
+    set.unlock(&password)
 }
 
 fn cmd_inspect_backup(cli: &Cli, path: PathBuf) -> Result<ExitCode> {
@@ -401,7 +425,9 @@ fn cmd_restore(
     progress: &mut dyn Progress,
     cancel: &CancelToken,
 ) -> Result<ExitCode> {
-    let set = BackupSet::open(&path)?;
+    let mut set = BackupSet::open(&path)?;
+    unlock_if_needed(cli, &mut set)?;
+    let set = set;
     let backup_disks = crate::discover::disks_holding(&path);
 
     let targets = mjolnir_restore::enumerate_targets(&backup_disks);

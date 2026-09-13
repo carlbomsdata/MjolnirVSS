@@ -34,8 +34,10 @@
 //! Copyright (C) the MjolnirVSS contributors.
 //! Licensed under the GNU General Public License, version 3 or later.
 
-#![forbid(unsafe_code)]
+// `password` needs one unsafe call to turn console echo off.
 #![warn(missing_docs)]
+
+pub mod password;
 
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};

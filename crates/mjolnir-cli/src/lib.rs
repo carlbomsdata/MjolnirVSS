@@ -11,8 +11,6 @@
 
 #![warn(missing_docs)]
 
-pub mod password;
-
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -487,7 +485,7 @@ fn cmd_backup(
     // Asked for before anything is read or written, so a mistyped password
     // costs a few seconds rather than a whole backup.
     let encryption = if encrypt {
-        let source = crate::password::PasswordSource {
+        let source = mjolnir_crypto::password::PasswordSource {
             file: password_file,
         };
         let password = source.read_new()?;
@@ -968,7 +966,7 @@ fn unlock_if_needed(cli: &Cli, set: &mut mjolnir_image::BackupSet) -> Result<()>
     if !set.is_encrypted() {
         return Ok(());
     }
-    let source = crate::password::PasswordSource {
+    let source = mjolnir_crypto::password::PasswordSource {
         file: cli.password_file.clone(),
     };
     let password = source.read("Password for this backup: ")?;
