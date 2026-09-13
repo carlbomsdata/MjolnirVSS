@@ -127,4 +127,22 @@ against synthetic volumes on any machine.
 | Decoding file records, data runs, names, streams | Tested against synthetic structures, including every malformed shape |
 | Reading a volume out of a backup | Tested against a synthetic volume built for it |
 | Path safety | Tested against every refusal above |
-| Reading a **real** Windows volume out of a **real** backup | **Not done yet.** The harness for it is built and described in [`vm-testing.md`](vm-testing.md) |
+| Reading a **real** Windows volume out of a **real** backup | Done. A live backup of a running Windows 11, browsed and copied out of, with every file checked against a hash taken when it was made. The run is described in [`vm-testing.md`](vm-testing.md) |
+
+### What the real volume changed
+
+Synthetic volumes are built by somebody who already knows how the reader works,
+which is exactly why they miss things. Two of these came back from the first
+real Windows volume, and neither could have come from a fixture:
+
+**A file with two names was copied out once.** `plain.bin` and `hardlink.bin`
+were two names for one file, as hard links are. The copy walked the folder by
+record number rather than by name, wrote whichever name came first, and dropped
+the other with no file and no message. Every name reached is now copied, and a
+name reached twice still only once.
+
+**Almost everything claimed to be hard linked.** Windows gives nearly every file
+a short `8.3` name beside its real one, and the record's own link count counts
+both. A listing of a real volume was therefore marked `[hard linked]` from top to
+bottom, which is noise that hides the few files where it is true. It is now
+counted from the names the index actually found, and a short name is not one.
