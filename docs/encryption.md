@@ -138,7 +138,30 @@ disk it came from. It also checks the things a round trip alone would not:
 
 | | |
 |---|---|
-| **The window** | Encryption is reachable from the command line only. The backup window does not offer it yet, and does not pretend to |
+| **The backup window** | Encryption is reachable from the command line only. The window does not offer it, and does not pretend to |
+| **The recovery wizard** | It lists an encrypted backup and marks it `[encrypted]`, but cannot ask for a password, so it says so and points at the command prompt behind it rather than erasing a disk and failing afterwards |
 | **Changing a password** | Would mean rewriting every block, since the key names them. Not built |
-| **Encrypted backups on real hardware** | Everything above was proven against synthetic disks. No encrypted backup of a real machine has been taken, restored and booted |
+| **Real hardware** | Proven in virtual machines only, like everything else here |
 | **Review by somebody else** | This has not been looked at by anyone but its author. Standard primitives used in documented ways is the floor, not a substitute |
+
+---
+
+## The whole cycle, done
+
+On 13 September 2026, against a real Windows 11 machine in a virtual machine —
+one that was itself BitLocker encrypted, so both kinds of encryption were in
+play at once:
+
+| | |
+|---|---|
+| The backup | `--encrypt` with `--password-file`. 26.3 GiB read, 17.0 GiB written, 21,456 chunks, 952 seconds. Verified with the keys it was written with, without asking again |
+| The manifest | Records `aes-256-gcm` and `argon2id`. Searched for the password: **not present** |
+| In the recovery environment | Listed as `[encrypted]` by both `find-backups` and the wizard |
+| The wizard | Refused it and named the command to use instead, rather than erasing a disk first |
+| A wrong password | Refused **immediately**, by name, and **before the target disk was touched** |
+| The right password | Opened it; the restore ran and rebuilt the boot configuration |
+| Starting it | **It booted** |
+| The files | 12 of 12 matched the hashes taken when they were made |
+
+The order in that table is the point. The password is checked before anything is
+erased, so getting it wrong costs you nothing.
