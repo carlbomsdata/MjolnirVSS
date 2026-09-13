@@ -18,6 +18,12 @@
     source machine's system disk; pass a larger number for the larger target
     test.
 
+.PARAMETER ShareBackupDisk
+    Attach the source machine's own backup disk instead of a copy. Faster, and
+    what you want when the source has no snapshots. By default a consolidated
+    copy is made, so the source machine keeps its snapshots and a restore test
+    cannot damage the backup it is restoring from.
+
 .EXAMPLE
     pwsh -File tests\vm\new-restore-vm.ps1
     pwsh -File tests\vm\new-restore-vm.ps1 -TargetDiskGB 96 -Name MjolnirVSS-Test-Restore-Large
@@ -31,6 +37,7 @@ param(
     [int] $Cpus = 2,
     [int] $VncPort = 5991,
     [string] $RecoveryIso,
+    [switch] $ShareBackupDisk,
     [switch] $Force,
     [switch] $NoStart
 )
@@ -59,10 +66,10 @@ if ((Test-Path -LiteralPath $sourceVmx) -and (Test-LabVmRunning -VmxPath $source
 if (-not (Test-Path -LiteralPath $backupDisk)) {
     throw "no backup disk at $backupDisk; run the backup phase first"
 }
-$deltas = Get-ChildItem -LiteralPath (Split-Path -Parent $backupDisk) -Filter 'backup-0*.vmdk' -ErrorAction SilentlyContinue
-if ($deltas) {
-    throw ("the backup disk is still part of a snapshot chain ({0}). " -f ($deltas.Name -join ', ')) +
-          'Delete the source machine snapshots first so the disk is one file.'
+$deltas = @(Get-ChildItem -LiteralPath (Split-Path -Parent $backupDisk) -Filter 'backup-0*.vmdk' -ErrorAction SilentlyContinue)
+if ($deltas -and $ShareBackupDisk) {
+    throw ("the backup disk is part of a snapshot chain ({0}), so it cannot be shared. " -f ($deltas.Name -join ', ')) +
+          'Delete the source machine snapshots, or drop -ShareBackupDisk to use a copy.'
 }
 
 # ---- the recovery media ----------------------------------------------------
@@ -88,6 +95,28 @@ if (Test-Path -LiteralPath $vmxPath) {
 }
 
 New-Item -ItemType Directory -Path $vmDir -Force | Out-Null
+
+# ---- the backup disk, as a copy unless sharing was asked for ---------------
+
+if (-not $ShareBackupDisk) {
+    # A snapshot chain is read through its newest link, which references its
+    # parent. Cloning that produces one file holding what the source machine
+    # actually wrote, and leaves the source machine's snapshots alone.
+    $newest = if ($deltas) {
+        ($deltas | Sort-Object Name | Select-Object -Last 1).FullName
+    } else {
+        $backupDisk
+    }
+    $copy = Join-Path $vmDir 'backup.vmdk'
+    Write-LabStep "copying the backup disk from $(Split-Path -Leaf $newest); this takes a few minutes"
+    $copy = Assert-InsideLab -Path $copy
+    $vdm = (Get-VMwarePaths).VDiskManager
+    $result = Invoke-Native -Executable $vdm -Arguments @('-r', $newest, '-t', '0', $copy)
+    if (-not (Test-Path -LiteralPath $copy)) {
+        throw "copying the backup disk to $copy failed:`n$($result.Output)"
+    }
+    $backupDisk = $copy
+}
 
 # ---- the blank target ------------------------------------------------------
 
