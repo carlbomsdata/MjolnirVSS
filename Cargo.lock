@@ -517,6 +517,7 @@ version = "0.1.0"
 dependencies = [
  "mjolnir-backup",
  "mjolnir-core",
+ "mjolnir-crypto",
  "mjolnir-files",
  "mjolnir-image",
  "mjolnir-ntfs",
