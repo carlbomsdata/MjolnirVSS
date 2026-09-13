@@ -767,3 +767,34 @@ fn each_name_of_a_file_has_its_own_path() {
         ]
     );
 }
+
+/// A BitLocker partition in a backup is not an NTFS volume to browse, and
+/// saying so is more honest than reporting the filesystem Windows saw inside it
+/// and then failing to open anything.
+#[test]
+fn a_bitlocker_partition_says_so_rather_than_failing_to_open() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut subject = Subject::build();
+
+    // The volume header a locked BitLocker partition actually carries. The
+    // partition is otherwise the one that was captured, which is the situation
+    // a backup of an encrypted machine produces.
+    let at = subject.disk.partitions[subject.index].1 as usize;
+    subject.disk.bytes[at + 3..at + 11].copy_from_slice(b"-FVE-FS-");
+
+    let dir = back_up(&subject, temp.path());
+    let set = BackupSet::open(&dir).unwrap();
+    let volume = volumes_in(&set)
+        .into_iter()
+        .find(|v| v.stream_id == subject.stream_id())
+        .expect("the partition is still listed");
+
+    assert_eq!(volume.signature, Some(VolumeSignature::BitLocker));
+    assert!(!volume.is_readable);
+    let why = volume.why_not.unwrap_or_default();
+    assert!(why.contains("BitLocker"), "{why}");
+    assert!(
+        why.contains("restoring the whole disk"),
+        "it should say what does work: {why}"
+    );
+}

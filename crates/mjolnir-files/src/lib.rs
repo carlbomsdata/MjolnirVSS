@@ -137,7 +137,7 @@ pub fn volumes_in(set: &BackupSet) -> Vec<BrowsableVolume> {
         let why_not = match signature {
             Some(VolumeSignature::Ntfs) => None,
             Some(VolumeSignature::BitLocker) => Some(
-                "this partition is BitLocker encrypted in the backup, so there is no filesystem                  to look inside; restoring the disk restores it exactly as it was"
+                "this partition is BitLocker encrypted in the backup, so there is no filesystem to look inside; restoring the whole disk restores it exactly as it was"
                     .to_owned(),
             ),
             Some(other) => Some(format!(
