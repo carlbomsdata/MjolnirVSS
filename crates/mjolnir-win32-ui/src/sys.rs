@@ -27,11 +27,11 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, SendMessageW, SetWindowTextW, SystemParametersInfoW, BS_DEFPUSHBUTTON,
-    BS_PUSHBUTTON, ES_AUTOHSCROLL, ES_LEFT, ES_MULTILINE, ES_READONLY, HMENU, NONCLIENTMETRICSW,
-    SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_SETFONT, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE,
-    WS_VSCROLL,
+    CallWindowProcW, CreateWindowExW, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
+    SystemParametersInfoW, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, DLGC_STATIC, ES_AUTOHSCROLL, ES_LEFT,
+    ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDLGCODE, WM_SETFONT,
+    WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 
 /// Reference device independent pixels per inch.
@@ -283,8 +283,66 @@ pub fn create_control(parent: HWND, kind: ControlKind, text: &str, id: i32, font
 
     if !hwnd.is_invalid() {
         set_font(hwnd, font);
+        if kind == ControlKind::TextArea {
+            make_output_only(hwnd);
+        }
     }
     hwnd
+}
+
+/// The window procedure an edit control had before it was made output only.
+///
+/// Every edit control on the system shares one, so one slot is enough.
+static ORIGINAL_EDIT_PROC: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
+
+/// Stops a read only text area from taking the keyboard hostage.
+///
+/// A multiline edit control answers `WM_GETDLGCODE` by asking for every key,
+/// including Tab and Return. That is right for something being typed into and
+/// wrong for something only being read: once the keyboard reached the body of
+/// the recovery wizard, Tab could not leave it and Return could not press
+/// anything, so the window could not be operated at all without a mouse. In
+/// Windows PE that is close to fatal.
+///
+/// Answering `DLGC_STATIC` instead tells the dialog manager this is text, not a
+/// control: Tab moves past it and Return goes to the default button. The mouse
+/// can still scroll it, which is the only reason it is an edit control and not
+/// a label.
+fn make_output_only(hwnd: HWND) {
+    // SAFETY: the handle names a live edit control this module just created.
+    // The previous procedure is kept and called for every message this one does
+    // not answer, which is what subclassing requires.
+    unsafe {
+        let previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, output_only_proc as isize);
+        if previous != 0 {
+            let _ = ORIGINAL_EDIT_PROC.set(previous);
+        }
+    }
+}
+
+/// The replacement procedure installed by [`make_output_only`].
+unsafe extern "system" fn output_only_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_GETDLGCODE {
+        return LRESULT(DLGC_STATIC as isize);
+    }
+    let previous = ORIGINAL_EDIT_PROC.get().copied().unwrap_or_default();
+    if previous == 0 {
+        // SAFETY: falling back to the default procedure is always valid.
+        return unsafe {
+            windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+        };
+    }
+    // SAFETY: `previous` came from SetWindowLongPtrW(GWLP_WNDPROC) on a control
+    // of this class, so it is a window procedure with this signature.
+    let original: WNDPROC = unsafe { std::mem::transmute(previous) };
+    // SAFETY: every argument is passed through unchanged to the procedure that
+    // was handling these messages a moment ago.
+    unsafe { CallWindowProcW(original, hwnd, msg, wparam, lparam) }
 }
 
 /// Moves and resizes a control.
