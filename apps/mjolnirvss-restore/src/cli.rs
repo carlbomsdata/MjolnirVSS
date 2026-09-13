@@ -24,7 +24,11 @@ use mjolnir_image::BackupSet;
     version,
     about = "Restore a Windows system disk from a MjolnirVSS backup",
     long_about = "Run with no arguments to open the recovery wizard.\n\
-                  The commands below exist for rehearsing and scripting a restore."
+                  The commands below exist for rehearsing and scripting a restore.\n\n\
+                  Every command takes --json and prints one document on standard output,\n\
+                  failures included, with the exit code inside it. A restore will not run\n\
+                  without --confirm, and refuses rather than waiting when there is no\n\
+                  terminal to ask on. See docs/automation.md."
 )]
 pub struct Cli {
     /// What to do.

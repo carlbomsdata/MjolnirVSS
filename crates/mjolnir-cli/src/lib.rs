@@ -29,7 +29,13 @@ use mjolnir_core::timestamp::UtcTimestamp;
     about = "Portable bare metal backup for Windows",
     long_about = "MjolnirVSS backs up a whole Windows system disk while Windows is running.\n\
                   Run it with no arguments to open the window; the commands below exist for\n\
-                  testing, diagnostics and scheduled backups."
+                  testing, diagnostics and scheduled backups.\n\n\
+                  Driving this from a script: every command takes --json and prints one\n\
+                  document on standard output, failures included. The exit code is the\n\
+                  status; 0 worked, 6 the backup is damaged, 7 the destination is wrong,\n\
+                  9 cancelled. Nothing waits for a person: --password-file supplies a\n\
+                  password, and a command that would have to ask names the flag instead\n\
+                  of hanging. The whole contract is in docs/automation.md."
 )]
 pub struct Cli {
     /// What to do.
