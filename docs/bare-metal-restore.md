@@ -2,10 +2,12 @@
 
 This is what to do when the disk has failed and you have a MjolnirVSS backup.
 
-> **Read this first.** No restored computer has ever been booted from a
-> MjolnirVSS backup. The restore engine is implemented and tested against virtual
-> disks, and the recovery application has never been run inside Windows PE. If
-> this is a real emergency and you have another backup, use that one.
+> **Read this first.** This has been done successfully, in virtual machines, and
+> never on real hardware. A Windows 11 machine was backed up while running,
+> restored onto a blank disk from MjolnirVSS recovery media, and started. What
+> that proves is that the procedure below is real rather than hopeful; it does
+> not prove it on your computer, with your firmware and your disk. If this is a
+> real emergency and you have another backup, use that one.
 
 ---
 
@@ -20,20 +22,33 @@ This is what to do when the disk has failed and you have a MjolnirVSS backup.
 
 ## Step 1: make bootable media
 
-Automatic recovery media creation is not built yet. Use Microsoft's own tool:
+Do this **before** the disk fails, on the machine being protected, while it still
+works. Media made afterwards on somebody else's computer is fine too.
 
-1. On a working computer, download the **Media Creation Tool** from Microsoft
-   and use it to write Windows installation media to a USB stick. Any recent
-   Windows 10 or 11 media works; the version does not have to match the machine
-   being recovered.
-2. Copy **`MjolnirVSS.Restore.exe`** onto that USB stick, at the top level so it
-   is easy to find.
+Press **Recovery media** in the MjolnirVSS window, or:
 
-That is all. MjolnirVSS does not redistribute any Microsoft files; you are using
-Microsoft's media, with one extra program copied onto it.
+```powershell
+MjolnirVSS.exe recovery-media --iso D:\MjolnirVSS-Recovery.iso
+```
 
-More detail, and what automatic creation will do when it exists:
-[`recovery-media.md`](recovery-media.md).
+This builds a bootable Windows PE disc out of the Windows parts already on the
+machine, with MjolnirVSS on it. Nothing is downloaded. It needs the Windows
+Assessment and Deployment Kit for the part that makes an ISO; without it,
+MjolnirVSS says so rather than half doing it.
+
+Write the ISO to a USB stick with Microsoft's `MakeWinPEMedia`, or any tool that
+writes a bootable image, or attach it directly if you are recovering a virtual
+machine.
+
+**The disc holds Microsoft's files and is licensed to the computer that made it.
+Do not pass it on.**
+
+If you would rather not build one, the old way still works: write Windows
+installation media with Microsoft's Media Creation Tool and copy
+`MjolnirVSS.Restore.exe` onto it. Boot it, press **Shift+F10** at the language
+screen for a command prompt, and carry on from step 5.
+
+More detail: [`recovery-media.md`](recovery-media.md).
 
 ---
 
@@ -50,7 +65,11 @@ might select by mistake.
 Start the computer and enter the boot menu, usually **F12**, **F10**, **Esc** or
 **F2** depending on the manufacturer. Choose the USB stick.
 
-Wait for the Windows Setup screen with the language options.
+**On MjolnirVSS recovery media**, Windows PE starts and the recovery wizard
+opens on its own. Skip to step 7.
+
+**On Windows installation media**, wait for the Setup screen with the language
+options and carry on below.
 
 ---
 
@@ -145,21 +164,26 @@ Close the wizard, remove the USB stick, and restart.
 
 ## If Windows does not start
 
-The data is on the disk. What is missing is the boot configuration, and this
-version of MjolnirVSS does not rebuild it.
+MjolnirVSS repairs the boot configuration itself, as part of every restore and
+on its own afterwards. In the one test where this mattered, a restored disk was
+deliberately left with no boot files, failed to start with
+`0xc000000f`, and started again after the repair below.
 
-1. Boot the recovery USB again.
-2. Choose **Repair your computer**, then **Troubleshoot**, then **Startup
-   Repair**. This is usually enough.
-
-If it is not, from a command prompt (**Shift+F10**):
+Boot the recovery media and run:
 
 ```text
-bootrec /fixboot
-bootrec /rebuildbcd
+X:\MjolnirVSS\MjolnirVSS.Restore.exe repair-boot --disk 0
 ```
 
-If the EFI partition needs its boot files recreated:
+Use `--dry-run` first if you want to see what it would change without changing
+anything. `--disk 0` is the disk you restored onto; `list-disks` names them.
+
+It refuses to touch the disk the machine is currently running from, so run it
+from the recovery media rather than from a Windows that has started.
+
+If that does not help, Microsoft's own repair is still there: boot the media,
+choose **Repair your computer**, then **Troubleshoot**, then **Startup Repair**.
+Or, by hand from a command prompt:
 
 ```text
 diskpart
@@ -175,10 +199,6 @@ bcdboot C:\Windows /s S: /f UEFI
 
 Replace `C:` with whatever letter the restored Windows partition has, and
 `partition 1` with the EFI system partition.
-
-**Repairing the boot configuration automatically is on the roadmap.** Until it
-exists this manual step is part of the recovery, and it is the most likely thing
-to be needed.
 
 ---
 

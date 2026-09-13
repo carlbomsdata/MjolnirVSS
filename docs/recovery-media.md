@@ -154,8 +154,13 @@ The libraries the recovery application does import are `kernel32`, `ntdll`,
 `user32`, `gdi32`, `comctl32`, `oleaut32` and one API set — all present in a base
 Windows PE image.
 
-**This is evidence, not proof.** The recovery application has not yet been run
-inside Windows PE. Until it has, treat "it will start" as an expectation.
+**And it has now been run there.** Media built this way was booted on UEFI
+firmware, Windows PE started, the recovery application drew its window on its
+own, and a whole restore was driven through it with no mouse. Running it there
+found four things wrong with the window that no amount of checking imports would
+have found; they are listed in [`vm-testing.md`](vm-testing.md).
+
+That was one machine, virtual, once.
 
 ---
 

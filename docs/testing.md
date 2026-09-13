@@ -82,9 +82,15 @@ the secondary partition table at the new end.
 
 `tests/integration/tests/safety.rs` damages backups the way a failing drive does
 and checks each one is caught: a flipped bit in a block, a truncated block, a
-missing block, an edited manifest, a missing completion marker. It also checks
-that a damaged backup stops a restore **before anything is written to the target
-disk**, and that the target is still blank afterwards.
+missing block, an edited manifest, an edited disk layout, a missing completion
+marker. It also checks that a damaged backup stops a restore **before anything is
+written to the target disk**, and that the target is still blank afterwards.
+
+It covers the ways a run is interrupted, too. A destination that cannot be
+written to fails the backup and leaves nothing that opens as usable. A backup, a
+verification and a restore are each cancelled **part way through**, after real
+work has been done, rather than before they start: cancelling at the door only
+proves the check at the door.
 
 ---
 
@@ -95,37 +101,52 @@ is the honest state of each.
 
 | # | Test | State |
 |---|---|---|
-| 1 | Backup on Windows 11 x64 | Discovery, planning and the shadow copy path proven on a BitLocker machine; a full live backup has not yet been run end to end |
+| 1 | Backup on Windows 11 x64 | **Done.** Live backup of a running Windows 11, in a virtual machine, verified |
 | 1b | BitLocker state read through the documented API | **Done.** `Win32_EncryptableVolume` queried on a real encrypted machine, agreeing with `manage-bde` |
-| 1c | Used block imaging against a real NTFS volume | Not done. Proven against synthetic volumes only |
+| 1c | Used block imaging against a real NTFS volume | **Done.** 3,722,337 of 16,460,799 clusters on a 62.8 GiB Windows volume, and the result restored and booted |
 | 1d | Restore point preflight on a real machine | **Done.** `MjolnirVSS.exe inspect` reported the machine's shadow copy storage and restore point count correctly |
+| 1e | Backup of a BitLocker machine | **Done.** Fully encrypted, unlocked, backed up with used block imaging working through the shadow copy |
 | 2 | Backup on Windows 10 x64 | Not done |
-| 3 | Backup with files changing during the run | Not done |
-| 4 | Common GPT layout: EFI, MSR, Windows, recovery | Proven against synthetic disks; not against a real machine end to end |
+| 3 | Backup with files changing during the run | Not done. The machine was idle both times |
+| 4 | Common GPT layout: EFI, MSR, Windows, recovery | **Done.** The layout Windows Setup produced, captured and restored, checked partition by partition |
 | 5 | 512e disk | Discovery proven on real hardware (Kingston KC2500, 512 logical / 4096 physical) |
 | 6 | 4Kn disk | Unit tested only; no hardware |
-| 7 | Destination disconnected during a backup | Not done |
-| 8 | Cancel during each stage | Cancellation is unit tested; not exercised against a real backup |
-| 9 | Corrupted blocks rejected | **Done**, automated |
+| 7 | Destination disconnected during a backup | **Partly.** Automated against a destination that cannot be written to; not against a drive physically pulled out |
+| 8 | Cancel during each stage | **Done**, automated, cancelling part way through a backup, a verification and a restore rather than before they start |
+| 9 | Corrupted blocks rejected | **Done**, automated, and again by hand against a real backup |
 | 10 | Missing metadata rejected | **Done**, automated |
-| 11 | Restore onto a blank virtual disk | **Done**, automated against file backed disks |
-| 12 | Restore onto a larger disk | **Done**, automated |
-| 13 | **Restored Windows boots** | **Not done. This is the gate.** |
-| 14 | Windows Recovery Environment works after a restore | Not done |
-| 15 | Extracting single files | Not implemented |
-| 16 | Recovery media boots | Not implemented |
-| 17 | Recovery application starts in Windows PE | **Not done.** Its imports have been checked and contain nothing Windows PE lacks, which is evidence, not proof |
-| 18 | Keyboard only operation | Built for, not verified by a person |
-| 19 | High DPI scaling | Built for, not verified by a person |
+| 11 | Restore onto a blank virtual disk | **Done.** From real recovery media, onto a blank disk, and it booted |
+| 12 | Restore onto a larger disk | **Done.** 64 GiB backup onto a 96 GiB disk, 32 GiB left unallocated, and it booted |
+| 13 | **Restored Windows boots** | **Done.** Unaided, with no repair needed |
+| 14 | Windows Recovery Environment works after a restore | **Partly.** `reagentc /info` on the restored machine reports it enabled and pointing at partition 4. It has not been started |
+| 15 | Extracting single files | **Done.** 12 files out of a real backup, every one checked against the hash taken when it was made |
+| 16 | Recovery media boots | **Done.** On UEFI firmware |
+| 17 | Recovery application starts in Windows PE | **Done.** It draws its window and runs a whole restore |
+| 18 | Keyboard only operation | **Done** for the recovery wizard, in Windows PE, with no mouse at any point. The backup window has not been driven this way |
+| 19 | High DPI scaling | Built for and unit tested at 1x, 2x and 3x; not looked at by a person on a high DPI screen |
+| 20 | Boot repair when it is needed | **Done.** The boot files were deleted from a restored disk, the machine then failed to start, and the repair is what made it start again |
+
+All of the above marked done were done in disposable virtual machines. **None of
+it was done on real hardware.** The run is described in
+[`vm-testing.md`](vm-testing.md).
 
 ---
 
 ## How to run the acceptance test
 
-This is the one that decides whether MjolnirVSS works. It has not been run.
+This is the one that decides whether MjolnirVSS works. **It has been run once,
+in virtual machines**, on 13 September 2026; what happened is in
+[`vm-testing.md`](vm-testing.md). It is written out here so it can be run again,
+by somebody else, on different hardware, which is the only thing that would turn
+one result into a reason to trust this.
+
+Most of it is now automated by the harness in `tests/vm`, which builds the
+machines, drives them without VMware Tools and checks the result. Doing it by
+hand is still worth it once, because watching a machine you did not script
+start up is different evidence from reading that a script says it did.
 
 **What you need:** a virtualisation product that can boot UEFI virtual machines
-(Hyper-V, VMware Workstation or VirtualBox), about 100 GB of free space, and
+(Hyper-V, VMware Workstation or VirtualBox), about 200 GB of free space, and
 Windows installation media.
 
 1. **Build a subject.** Create a UEFI virtual machine with a 64 GB disk and
