@@ -36,11 +36,13 @@ pub mod safepath;
 pub use extract::{extract_file, extract_tree, ExtractOptions, ExtractOutcome, Extracted};
 pub use safepath::{safe_join, sanitise_component, PathRefusal};
 
+use mjolnir_core::blockio::BlockSource;
 use mjolnir_core::cancel::CancelToken;
 use mjolnir_core::error::{Error, Result};
 use mjolnir_core::exit::ExitCode;
 use mjolnir_image::manifest::{Stream, StreamKind};
 use mjolnir_image::{BackupSet, StreamReader};
+use mjolnir_ntfs::boot::VolumeSignature;
 use mjolnir_ntfs::volume::{FileIndex, Volume};
 
 /// A partition inside a backup that holds a filesystem worth browsing.
@@ -56,8 +58,14 @@ pub struct BrowsableVolume {
     pub drive_letter: Option<String>,
     /// Its label at that time.
     pub label: Option<String>,
-    /// The filesystem Windows reported.
+    /// The filesystem Windows reported when the backup was taken.
+    ///
+    /// A hint, not the decision. Windows does not always report one, and for an
+    /// encrypted volume it reports what was inside rather than what was stored.
     pub filesystem: Option<String>,
+    /// What the first sector of the captured partition actually turned out to
+    /// be. `None` when it could not be read.
+    pub signature: Option<VolumeSignature>,
     /// Size of the partition.
     pub size_bytes: u64,
     /// Whether MjolnirVSS can read inside it.
@@ -120,18 +128,33 @@ pub fn volumes_in(set: &BackupSet) -> Vec<BrowsableVolume> {
             .and_then(|v| v.filesystem.clone())
             .or_else(|| partition.and_then(|p| p.filesystem.clone()));
 
-        let is_ntfs = filesystem
-            .as_deref()
-            .map(|f| f.eq_ignore_ascii_case("NTFS"))
-            .unwrap_or(false);
+        // What the partition holds is decided by reading it, not by trusting
+        // what was written down. Windows reports no filesystem for a volume it
+        // did not mount, and a backup can outlive the machine that explains
+        // itself. One sector out of the backup settles it.
+        let signature = first_sector(set, stream).map(|s| VolumeSignature::of(&s));
 
-        let why_not = if !is_ntfs {
-            Some(format!(
+        let why_not = match signature {
+            Some(VolumeSignature::Ntfs) => None,
+            Some(VolumeSignature::BitLocker) => Some(
+                "this partition is BitLocker encrypted in the backup, so there is no filesystem                  to look inside; restoring the disk restores it exactly as it was"
+                    .to_owned(),
+            ),
+            Some(other) => Some(format!(
                 "MjolnirVSS can only look inside NTFS, and this partition holds {}",
+                other.describe()
+            )),
+            None => Some(format!(
+                "the start of this partition could not be read out of the backup{}",
                 filesystem
                     .as_deref()
-                    .unwrap_or("no filesystem it recognises")
-            ))
+                    .map(|f| format!(", which was recorded as {f}"))
+                    .unwrap_or_default()
+            )),
+        };
+
+        let why_not = if why_not.is_some() {
+            why_not
         } else if !stream.capture.is_restorable() {
             Some(
                 "this backup is a preview, so only the first part of the partition was captured"
@@ -150,12 +173,25 @@ pub fn volumes_in(set: &BackupSet) -> Vec<BrowsableVolume> {
             drive_letter: volume.and_then(|v| v.drive_letter.clone()),
             label: volume.and_then(|v| v.label.clone()),
             filesystem,
+            signature,
             size_bytes: stream.length,
             is_readable: why_not.is_none(),
             why_not,
         });
     }
     out
+}
+
+/// Reads the first sector of a captured partition out of a backup.
+///
+/// Returns `None` rather than an error: a partition whose start is missing is
+/// one the operator should be told about in the list, beside the others, not a
+/// reason to refuse to show the list at all.
+fn first_sector(set: &BackupSet, stream: &Stream) -> Option<Vec<u8>> {
+    let mut reader = StreamReader::new(set.manifest(), stream, set.chunk_store());
+    let mut sector = vec![0u8; 512];
+    reader.read_exact_at(0, &mut sector).ok()?;
+    Some(sector)
 }
 
 /// Finds a stream in a backup by its identifier.
@@ -223,6 +259,7 @@ mod tests {
             drive_letter: Some("C".to_owned()),
             label: Some("Windows".to_owned()),
             filesystem: Some("NTFS".to_owned()),
+            signature: Some(VolumeSignature::Ntfs),
             size_bytes: 64 * 1024 * 1024 * 1024,
             is_readable: true,
             why_not: None,
@@ -243,6 +280,7 @@ mod tests {
             drive_letter: None,
             label: None,
             filesystem: Some("FAT32".to_owned()),
+            signature: Some(VolumeSignature::Fat),
             size_bytes: 100 * 1024 * 1024,
             is_readable: false,
             why_not: Some("not NTFS".to_owned()),
