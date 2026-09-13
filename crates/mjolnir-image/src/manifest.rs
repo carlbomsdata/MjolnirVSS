@@ -511,6 +511,14 @@ pub struct Manifest {
     pub hash: HashSpec,
     /// Chunk store layout.
     pub chunk_store: ChunkStoreSpec,
+    /// How the contents are sealed, when they are.
+    ///
+    /// Absent in a backup that is not encrypted, and absent from the document
+    /// entirely rather than present and null, so an unencrypted backup written
+    /// by this version is the same bytes it would have been before encryption
+    /// existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<mjolnir_crypto::EncryptionInfo>,
     /// What the shadow copy service did.
     pub vss: VssInfo,
     /// Filesystems found inside the captured partitions.

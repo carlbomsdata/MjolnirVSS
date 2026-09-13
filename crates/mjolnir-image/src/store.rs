@@ -52,6 +52,12 @@ pub struct ChunkStore {
     /// Shared rather than copied: key material should exist in one place, and
     /// a store is handed around by value.
     keys: Option<std::sync::Arc<mjolnir_crypto::Keys>>,
+    /// The backup is sealed and no password has been given.
+    ///
+    /// Without this the store would try to decompress ciphertext and report
+    /// "the compressed stream is damaged", sending somebody to check their
+    /// drive for a fault that is really a missing password.
+    locked: bool,
 }
 
 impl ChunkStore {
@@ -61,7 +67,14 @@ impl ChunkStore {
             layout,
             compression,
             keys: None,
+            locked: false,
         }
+    }
+
+    /// The same store, marked as sealed with no password given.
+    pub fn locked(mut self) -> Self {
+        self.locked = true;
+        self
     }
 
     /// The same store, sealing and opening chunks with `keys`.
@@ -70,7 +83,22 @@ impl ChunkStore {
     /// mean compressing ciphertext, which does not compress.
     pub fn with_keys(mut self, keys: std::sync::Arc<mjolnir_crypto::Keys>) -> Self {
         self.keys = Some(keys);
+        self.locked = false;
         self
+    }
+
+    /// Refuses early, and by name, when there is no password to read with.
+    fn check_unlocked(&self) -> Result<()> {
+        if self.locked {
+            return Err(Error::new(
+                ExitCode::Failure,
+                "this backup is encrypted and no password has been given",
+                "its contents are sealed, so nothing can be read out of it until it is unlocked"
+                    .to_owned(),
+                "run the command again with the password for this backup",
+            ));
+        }
+        Ok(())
     }
 
     /// Whether this store seals what it writes.
@@ -115,6 +143,7 @@ impl ChunkStore {
     /// the operation idempotent, which is what lets a backup be resumed later
     /// without redoing work, and what makes deduplication free.
     pub fn put(&self, data: &[u8]) -> Result<PutOutcome> {
+        self.check_unlocked()?;
         if data.is_empty() {
             return Err(Error::new(
                 ExitCode::Failure,
@@ -237,6 +266,7 @@ impl ChunkStore {
     /// limit. The digest check happens after, which is what catches silent
     /// corruption on the destination drive.
     pub fn get(&self, hash: ChunkHash, expected_size: u32) -> Result<Vec<u8>> {
+        self.check_unlocked()?;
         let path = self.layout.chunk_path(hash);
         let file = File::open(&path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {

@@ -315,6 +315,7 @@ mod tests {
             compression: Default::default(),
             hash: Default::default(),
             chunk_store: Default::default(),
+            encryption: None,
             vss: Default::default(),
             volumes: Vec::new(),
             streams: Vec::new(),

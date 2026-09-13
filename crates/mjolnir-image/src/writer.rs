@@ -40,6 +40,9 @@ pub struct BackupWriter {
     /// Maps a digest to its position in the manifest chunk table, so the same
     /// bytes appearing twice cost one table entry and one file.
     chunk_index: BTreeMap<ChunkHash, u32>,
+    /// Kept so the finished backup can be verified with the same keys it was
+    /// written with, without asking for the password a second time.
+    keys: Option<std::sync::Arc<mjolnir_crypto::Keys>>,
 }
 
 /// How a backup writer should be configured.
@@ -51,6 +54,40 @@ pub struct WriterOptions {
     pub compression: CompressionSpec,
     /// Chunk store layout.
     pub chunk_store: ChunkStoreSpec,
+    /// Keys to seal the contents with, when the backup is to be encrypted.
+    ///
+    /// Not part of `Default`: a backup is unencrypted unless somebody asked for
+    /// otherwise and supplied a password.
+    pub encryption: Option<StartedEncryption>,
+}
+
+/// Keys for a new encrypted backup, and what to record about them.
+#[derive(Clone)]
+pub struct StartedEncryption {
+    /// The keys, shared with the chunk store.
+    pub keys: std::sync::Arc<mjolnir_crypto::Keys>,
+    /// What goes into the manifest.
+    pub info: mjolnir_crypto::EncryptionInfo,
+}
+
+impl std::fmt::Debug for StartedEncryption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The keys must not be printable, so neither is this.
+        f.debug_struct("StartedEncryption")
+            .field("cipher", &self.info.cipher)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StartedEncryption {
+    /// Derives keys for a new backup from `password`.
+    pub fn begin(password: &str, params: mjolnir_crypto::KdfParams) -> Result<Self> {
+        let started = mjolnir_crypto::begin(password, params)?;
+        Ok(Self {
+            keys: std::sync::Arc::new(started.keys),
+            info: started.info,
+        })
+    }
 }
 
 impl BackupWriter {
@@ -84,7 +121,17 @@ impl BackupWriter {
         fs::create_dir_all(&dir).map_err(|e| Error::io(dir.display(), e))?;
         fs::create_dir_all(layout.logs_dir()).map_err(|e| Error::io(dir.display(), e))?;
 
-        let store = ChunkStore::new(layout.clone(), options.compression);
+        // Encryption, when asked for. The keys stay in this writer and in the
+        // store it hands out; what goes into the manifest is only what is
+        // needed to *try* a password, never anything that answers one.
+        let mut store = ChunkStore::new(layout.clone(), options.compression);
+        let encryption = match &options.encryption {
+            Some(started) => {
+                store = store.with_keys(started.keys.clone());
+                Some(started.info.clone())
+            }
+            None => None,
+        };
         let manifest = Manifest {
             format: FormatHeader::current(DocumentKind::Manifest),
             tool: ToolInfo {
@@ -97,6 +144,7 @@ impl BackupWriter {
             compression: options.compression,
             hash: HashSpec::default(),
             chunk_store: options.chunk_store,
+            encryption,
             vss: VssInfo::default(),
             volumes: Vec::new(),
             streams: Vec::new(),
@@ -112,6 +160,7 @@ impl BackupWriter {
             manifest,
             disk_layout,
             chunk_index: BTreeMap::new(),
+            keys: options.encryption.as_ref().map(|e| e.keys.clone()),
         })
     }
 
@@ -256,6 +305,7 @@ impl BackupWriter {
             manifest: self.manifest,
             disk_layout: self.disk_layout,
             documents,
+            keys: self.keys,
         })
     }
 
@@ -383,6 +433,8 @@ pub struct FinalizedBackup {
     manifest: Manifest,
     disk_layout: DiskLayout,
     documents: Vec<DocumentDigest>,
+    /// Kept so verification can read back what was just written.
+    keys: Option<std::sync::Arc<mjolnir_crypto::Keys>>,
 }
 
 impl FinalizedBackup {
@@ -403,7 +455,11 @@ impl FinalizedBackup {
 
     /// A chunk store reading what was just written.
     pub fn chunk_store(&self) -> ChunkStore {
-        ChunkStore::new(self.layout.clone(), self.manifest.compression)
+        let store = ChunkStore::new(self.layout.clone(), self.manifest.compression);
+        match &self.keys {
+            Some(keys) => store.with_keys(keys.clone()),
+            None => store,
+        }
     }
 
     /// Writes `completion.json`, making the backup restorable.

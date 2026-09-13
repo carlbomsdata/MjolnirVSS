@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [dev-dependencies]
 mjolnir-core = { workspace = true }
 mjolnir-image = { workspace = true }
+mjolnir-crypto = { workspace = true }
 mjolnir-storage = { workspace = true }
 mjolnir-backup = { workspace = true }
 mjolnir-restore = { workspace = true }

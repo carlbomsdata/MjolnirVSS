@@ -32,6 +32,8 @@ pub struct BackupSet {
     disk_layout: DiskLayout,
     completion: Option<Completion>,
     issues: Vec<Issue>,
+    /// Present once a password has been given for an encrypted backup.
+    keys: Option<std::sync::Arc<mjolnir_crypto::Keys>>,
 }
 
 impl BackupSet {
@@ -111,6 +113,7 @@ impl BackupSet {
             disk_layout,
             completion,
             issues,
+            keys: None,
         })
     }
 
@@ -149,7 +152,44 @@ impl BackupSet {
 
     /// A chunk store reading from this backup.
     pub fn chunk_store(&self) -> ChunkStore {
-        ChunkStore::new(self.layout.clone(), self.manifest.compression)
+        let store = ChunkStore::new(self.layout.clone(), self.manifest.compression);
+        match &self.keys {
+            Some(keys) => store.with_keys(keys.clone()),
+            None if self.is_encrypted() => store.locked(),
+            None => store,
+        }
+    }
+
+    /// Whether the contents of this backup are sealed.
+    ///
+    /// Answerable without a password: it is read from the manifest, which stays
+    /// readable on purpose so a backup can be identified before anybody is
+    /// asked for anything.
+    pub fn is_encrypted(&self) -> bool {
+        self.manifest.encryption.is_some()
+    }
+
+    /// Whether a password has been supplied for this backup already.
+    pub fn is_unlocked(&self) -> bool {
+        self.keys.is_some() || !self.is_encrypted()
+    }
+
+    /// Supplies the password, so the contents can be read.
+    ///
+    /// A wrong password is reported here, at once, rather than as a failure to
+    /// read some block in the middle of a restore.
+    pub fn unlock(&mut self, password: &str) -> Result<()> {
+        let Some(info) = &self.manifest.encryption else {
+            return Err(Error::new(
+                mjolnir_core::ExitCode::Failure,
+                "this backup is not encrypted",
+                "a password was given for a backup that does not have one".to_owned(),
+                "open it without a password",
+            ));
+        };
+        let keys = mjolnir_crypto::unlock(info, password)?;
+        self.keys = Some(std::sync::Arc::new(keys));
+        Ok(())
     }
 }
 

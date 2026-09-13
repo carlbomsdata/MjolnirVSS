@@ -135,6 +135,37 @@ pub fn back_up(disk: &SyntheticDisk, destination: &Path, name: &str) -> Result<P
     back_up_with(disk, destination, name, CaptureMethod::RawFull, None)
 }
 
+/// Takes a complete, verified, **encrypted** backup of a synthetic disk.
+///
+/// Fast key settings: what these tests check is that the whole chain works with
+/// sealing in it, not how long Argon2id takes.
+pub fn back_up_encrypted(
+    disk: &SyntheticDisk,
+    destination: &Path,
+    name: &str,
+    password: &str,
+) -> Result<PathBuf> {
+    let started = mjolnir_image::writer::StartedEncryption::begin(
+        password,
+        mjolnir_crypto::KdfParams {
+            memory_kib: 8 * 1024,
+            passes: 1,
+            lanes: 1,
+        },
+    )?;
+    back_up_with_options(
+        disk,
+        destination,
+        name,
+        CaptureMethod::RawFull,
+        None,
+        WriterOptions {
+            encryption: Some(started),
+            ..Default::default()
+        },
+    )
+}
+
 /// Takes a backup with a specific capture method and optional byte limit.
 pub fn back_up_with(
     disk: &SyntheticDisk,
@@ -142,6 +173,25 @@ pub fn back_up_with(
     name: &str,
     capture: CaptureMethod,
     limit: Option<u64>,
+) -> Result<PathBuf> {
+    back_up_with_options(
+        disk,
+        destination,
+        name,
+        capture,
+        limit,
+        WriterOptions::default(),
+    )
+}
+
+/// The one that actually does it, so encryption can be asked for.
+pub fn back_up_with_options(
+    disk: &SyntheticDisk,
+    destination: &Path,
+    name: &str,
+    capture: CaptureMethod,
+    limit: Option<u64>,
+    options: WriterOptions,
 ) -> Result<PathBuf> {
     let backup_name = BackupName::new(name).expect("valid test backup name");
     let mut writer = BackupWriter::create(
@@ -160,7 +210,7 @@ pub fn back_up_with(
             windows: Default::default(),
             firmware: FirmwareMode::Uefi,
         },
-        WriterOptions::default(),
+        options,
     )?;
 
     let spec = capture_spec_for(disk, capture, limit);
