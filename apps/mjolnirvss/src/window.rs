@@ -67,6 +67,16 @@ const ID_CANCEL: i32 = 1203;
 const ID_DETAILS_TOGGLE: i32 = 1204;
 const ID_DETAILS: i32 = 1205;
 
+const ID_BROWSE_PATH: i32 = 1400;
+const ID_BROWSE_LIST: i32 = 1401;
+const ID_BROWSE_OPEN: i32 = 1402;
+const ID_BROWSE_UP: i32 = 1403;
+const ID_BROWSE_EXTRACT: i32 = 1404;
+const ID_BROWSE_BACK: i32 = 1405;
+
+/// Notification a list box sends when an item is double clicked.
+const LBN_DBLCLK: u32 = 2;
+
 const ID_RESULT_TITLE: i32 = 1300;
 const ID_RESULT_BODY: i32 = 1301;
 const ID_OPEN_FOLDER: i32 = 1302;
@@ -88,6 +98,7 @@ enum Screen {
     Destination,
     Progress,
     Result,
+    Browse,
 }
 
 /// Every control in the window. Created once, shown per screen.
@@ -121,10 +132,17 @@ struct Controls {
     open_folder: HWND,
     make_media: HWND,
     close: HWND,
+
+    browse_path: HWND,
+    browse_list: HWND,
+    browse_open: HWND,
+    browse_up: HWND,
+    browse_extract: HWND,
+    browse_back: HWND,
 }
 
 impl Controls {
-    fn all(&self) -> [HWND; 25] {
+    fn all(&self) -> [HWND; 31] {
         [
             self.backup,
             self.restore_files,
@@ -151,6 +169,12 @@ impl Controls {
             self.open_folder,
             self.make_media,
             self.close,
+            self.browse_path,
+            self.browse_list,
+            self.browse_open,
+            self.browse_up,
+            self.browse_extract,
+            self.browse_back,
         ]
     }
 
@@ -189,6 +213,14 @@ impl Controls {
                 self.make_media,
                 self.close,
             ],
+            Screen::Browse => vec![
+                self.browse_path,
+                self.browse_list,
+                self.browse_open,
+                self.browse_up,
+                self.browse_extract,
+                self.browse_back,
+            ],
         }
     }
 }
@@ -203,6 +235,10 @@ enum Job {
     Backup(Worker<BackupOutcome>),
     /// Building recovery media.
     Media(Worker<MediaOutcome>),
+    /// Reading the list of files in a backed up volume.
+    Index(Worker<mjolnir_ntfs::volume::FileIndex>),
+    /// Copying files out of a backup.
+    Extract(Worker<mjolnir_files::ExtractOutcome>),
 }
 
 impl Job {
@@ -210,6 +246,8 @@ impl Job {
         match self {
             Job::Backup(w) => w.progress(),
             Job::Media(w) => w.progress(),
+            Job::Index(w) => w.progress(),
+            Job::Extract(w) => w.progress(),
         }
     }
 
@@ -217,6 +255,8 @@ impl Job {
         match self {
             Job::Backup(w) => w.is_cancelling(),
             Job::Media(w) => w.is_cancelling(),
+            Job::Index(w) => w.is_cancelling(),
+            Job::Extract(w) => w.is_cancelling(),
         }
     }
 
@@ -224,6 +264,8 @@ impl Job {
         match self {
             Job::Backup(w) => w.is_finished(),
             Job::Media(w) => w.is_finished(),
+            Job::Index(w) => w.is_finished(),
+            Job::Extract(w) => w.is_finished(),
         }
     }
 
@@ -231,6 +273,8 @@ impl Job {
         match self {
             Job::Backup(w) => w.cancel(),
             Job::Media(w) => w.cancel(),
+            Job::Index(w) => w.cancel(),
+            Job::Extract(w) => w.cancel(),
         }
     }
 
@@ -239,6 +283,8 @@ impl Job {
         match self {
             Job::Backup(_) => "A backup is already running.",
             Job::Media(_) => "Recovery media is already being made.",
+            Job::Index(_) => "A backup is already being opened.",
+            Job::Extract(_) => "Files are already being copied.",
         }
     }
 
@@ -246,6 +292,8 @@ impl Job {
         match self {
             Job::Backup(w) => w.take_result().map(JobResult::Backup),
             Job::Media(w) => w.take_result().map(JobResult::Media),
+            Job::Index(w) => w.take_result().map(JobResult::Index),
+            Job::Extract(w) => w.take_result().map(JobResult::Extract),
         }
     }
 }
@@ -256,6 +304,60 @@ enum JobResult {
     Backup(std::result::Result<BackupOutcome, Error>),
     /// Recovery media, or why there was none.
     Media(std::result::Result<MediaOutcome, Error>),
+    /// A volume's file tree, or why it could not be read.
+    Index(std::result::Result<mjolnir_ntfs::volume::FileIndex, Error>),
+    /// Files copied out, or why they were not.
+    Extract(std::result::Result<mjolnir_files::ExtractOutcome, Error>),
+}
+
+/// A backup opened for browsing.
+///
+/// The file tree is kept, and the backup is re-opened for each extraction. That
+/// avoids holding a reader and an index that borrow from each other for the
+/// life of a screen, and browsing itself needs no reading: the tree is already
+/// in memory.
+struct Browsing {
+    /// The backup folder.
+    backup: PathBuf,
+    /// Which partition is being browsed.
+    stream_id: String,
+    /// How that partition should be described.
+    volume_name: String,
+    /// The tree.
+    index: mjolnir_ntfs::volume::FileIndex,
+    /// The directory being shown.
+    at: u64,
+    /// What is in it, in the order the list shows it.
+    entries: Vec<mjolnir_ntfs::volume::IndexEntry>,
+}
+
+/// How one entry reads in the list.
+fn describe_entry(entry: &mjolnir_ntfs::volume::IndexEntry) -> String {
+    let mut line = if entry.is_directory {
+        format!("[{}]", entry.name)
+    } else {
+        entry.name.clone()
+    };
+    if !entry.is_directory {
+        line.push_str(&format!(
+            "   {}",
+            mjolnir_core::progress::format_bytes(entry.size)
+        ));
+    }
+    let mut notes = Vec::new();
+    if entry.is_reparse_point {
+        notes.push("link");
+    }
+    if let Some(why) = entry.why_unreadable() {
+        notes.push(why);
+    }
+    if !entry.streams.is_empty() {
+        notes.push("has hidden streams");
+    }
+    if !notes.is_empty() {
+        line.push_str(&format!("   ({})", notes.join(", ")));
+    }
+    line
 }
 
 /// The window's state.
@@ -267,6 +369,9 @@ pub struct BackupWindow {
     worker: Option<Job>,
     finished: Option<JobResult>,
     show_details: bool,
+    browsing: Option<Browsing>,
+    /// What the file tree being read is for, while it is being read.
+    pending_browse: Option<(PathBuf, String, String)>,
 }
 
 impl BackupWindow {
@@ -281,6 +386,8 @@ impl BackupWindow {
             worker: None,
             finished: None,
             show_details: false,
+            browsing: None,
+            pending_browse: None,
         };
         me.create_controls(window);
         me
@@ -346,6 +453,19 @@ impl BackupWindow {
             f,
         );
         c.close = sys::create_control(h, ControlKind::DefaultButton, "Close", ID_CLOSE, f);
+
+        c.browse_path = sys::create_control(h, ControlKind::Label, "", ID_BROWSE_PATH, f);
+        c.browse_list = sys::create_control(h, ControlKind::ListBox, "", ID_BROWSE_LIST, f);
+        c.browse_open = sys::create_control(h, ControlKind::Button, "Open", ID_BROWSE_OPEN, f);
+        c.browse_up = sys::create_control(h, ControlKind::Button, "Up", ID_BROWSE_UP, f);
+        c.browse_extract = sys::create_control(
+            h,
+            ControlKind::DefaultButton,
+            "Copy out...",
+            ID_BROWSE_EXTRACT,
+            f,
+        );
+        c.browse_back = sys::create_control(h, ControlKind::Button, "Back", ID_BROWSE_BACK, f);
     }
 
     fn show_screen(&mut self, window: &Window, screen: Screen) {
@@ -364,6 +484,7 @@ impl BackupWindow {
             Screen::Destination => self.controls.start,
             Screen::Progress => self.controls.cancel,
             Screen::Result => self.controls.close,
+            Screen::Browse => self.controls.browse_list,
         };
         window.focus(focus);
         window.invalidate();
@@ -425,6 +546,39 @@ impl BackupWindow {
                         x + inner - start_width,
                         bottom,
                         start_width,
+                        s(BUTTON_HEIGHT),
+                    ),
+                );
+            }
+            Screen::Browse => {
+                let mut y = s(MARGIN);
+                sys::place(c.browse_path, sys::rect(x, y, inner, s(LINE) * 2));
+                y += s(LINE) * 2 + s(8);
+
+                let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
+                let list_height = (bottom - y - s(12)).max(s(80));
+                sys::place(c.browse_list, sys::rect(x, y, inner, list_height));
+
+                let button = s(90);
+                sys::place(
+                    c.browse_back,
+                    sys::rect(x, bottom, button, s(BUTTON_HEIGHT)),
+                );
+                sys::place(
+                    c.browse_up,
+                    sys::rect(x + button + s(8), bottom, button, s(BUTTON_HEIGHT)),
+                );
+                sys::place(
+                    c.browse_open,
+                    sys::rect(x + (button + s(8)) * 2, bottom, button, s(BUTTON_HEIGHT)),
+                );
+                let extract_width = s(150);
+                sys::place(
+                    c.browse_extract,
+                    sys::rect(
+                        x + inner - extract_width,
+                        bottom,
+                        extract_width,
                         s(BUTTON_HEIGHT),
                     ),
                 );
@@ -712,6 +866,35 @@ impl BackupWindow {
                 self.show_media_result(window, r);
                 return;
             }
+            JobResult::Extract(r) => {
+                self.show_extract_result(window, r);
+                return;
+            }
+            JobResult::Index(r) => {
+                let pending = self.pending_browse.take();
+                match (r, pending) {
+                    (Ok(index), Some((backup, stream_id, volume_name))) => {
+                        let at = mjolnir_ntfs::record::MftReference::ROOT;
+                        self.browsing = Some(Browsing {
+                            backup,
+                            stream_id,
+                            volume_name,
+                            index,
+                            at,
+                            entries: Vec::new(),
+                        });
+                        self.show_browse(window);
+                    }
+                    (Err(e), _) => {
+                        if e.exit() != ExitCode::Cancelled {
+                            message_box::error_for(window.raw(), "MjolnirVSS", &e);
+                        }
+                        self.show_screen(window, Screen::Menu);
+                    }
+                    (Ok(_), None) => self.show_screen(window, Screen::Menu),
+                }
+                return;
+            }
         };
 
         match &result {
@@ -919,6 +1102,283 @@ impl BackupWindow {
         self.show_screen(window, Screen::Result);
     }
 
+    /// Opens a backup to look inside it.
+    ///
+    /// Three questions: which backup, which partition, and then the list. The
+    /// tree is read on a worker, because a volume with a few hundred thousand
+    /// files takes a few seconds and the window must stay usable.
+    fn browse_backup(&mut self, window: &Window) {
+        if let Some(running) = &self.worker {
+            message_box::warn(window.raw(), "MjolnirVSS", running.describe());
+            return;
+        }
+
+        let Ok(Some(folder)) = shell::pick_folder(window.raw(), "Choose the backup to look inside")
+        else {
+            return;
+        };
+
+        let set = match mjolnir_image::BackupSet::open(&folder) {
+            Ok(set) => set,
+            Err(e) => {
+                message_box::error_for(window.raw(), "MjolnirVSS", &e);
+                return;
+            }
+        };
+
+        let volumes = mjolnir_files::volumes_in(&set);
+        let readable: Vec<_> = volumes.iter().filter(|v| v.is_readable).collect();
+        if readable.is_empty() {
+            let why = volumes
+                .iter()
+                .filter_map(|v| v.why_not.clone())
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            message_box::info(
+                window.raw(),
+                "MjolnirVSS",
+                &format!(
+                    "There is nothing in this backup that MjolnirVSS can look inside.\n\n{why}"
+                ),
+            );
+            return;
+        }
+
+        // Almost always one Windows partition. When there are two, the
+        // operator is asked rather than guessed at.
+        let chosen = if readable.len() == 1 {
+            readable[0].clone()
+        } else {
+            let first = readable[0];
+            let second = readable[1];
+            match message_box::choose(
+                window.raw(),
+                "Restore files",
+                "Which drive?",
+                "A backup can hold more than one drive with files on it.",
+                &volumes
+                    .iter()
+                    .map(|v| v.describe())
+                    .collect::<Vec<_>>()
+                    .join("\r\n"),
+                &first.describe(),
+                &second.describe(),
+            ) {
+                Some(true) => first.clone(),
+                Some(false) => second.clone(),
+                None => return,
+            }
+        };
+
+        let name = chosen.describe();
+        let stream_id = chosen.stream_id.clone();
+        let backup = folder.clone();
+
+        sys::set_text(self.controls.stage, "Reading the list of files...");
+        sys::set_text(self.controls.stats, "");
+        sys::set_text(self.controls.details, "");
+        sys::set_progress(self.controls.progress, 0);
+        sys::set_progress_state(self.controls.progress, ProgressState::Normal);
+        sys::enable(self.controls.cancel, true);
+        sys::set_text(self.controls.cancel, "Cancel");
+        self.finished = None;
+
+        let worker_backup = backup.clone();
+        let worker_stream = stream_id.clone();
+        self.worker = Some(Job::Index(Worker::start(move |_progress, cancel| {
+            let set = mjolnir_image::BackupSet::open(&worker_backup)?;
+            let stream = mjolnir_files::stream_in(&set, &worker_stream)?;
+            let open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
+            Ok(open.index().clone())
+        })));
+
+        self.pending_browse = Some((backup, stream_id, name));
+        self.show_screen(window, Screen::Progress);
+        window.set_timer(TIMER_PROGRESS, TIMER_INTERVAL);
+    }
+
+    /// Shows the contents of the directory the browser is in.
+    fn show_browse(&mut self, window: &Window) {
+        let Some(browsing) = &mut self.browsing else {
+            return;
+        };
+        browsing.entries = browsing
+            .index
+            .children_of(browsing.at)
+            .into_iter()
+            .cloned()
+            .collect();
+
+        let path = browsing
+            .index
+            .path_of(browsing.at)
+            .unwrap_or_else(|| "\\".to_owned());
+        let header = format!("{}\r\n{path}", browsing.volume_name);
+
+        sys::set_text(self.controls.browse_path, &header);
+        sys::list_clear(self.controls.browse_list);
+        for entry in &browsing.entries {
+            sys::list_add(self.controls.browse_list, &describe_entry(entry));
+        }
+        if !browsing.entries.is_empty() {
+            sys::list_select(self.controls.browse_list, Some(0));
+        }
+        self.show_screen(window, Screen::Browse);
+        window.focus(self.controls.browse_list);
+    }
+
+    /// Opens whatever is selected, when it is a directory.
+    fn browse_open_selected(&mut self, window: &Window) {
+        let Some(index) = sys::list_selected(self.controls.browse_list) else {
+            return;
+        };
+        let Some(browsing) = &mut self.browsing else {
+            return;
+        };
+        let Some(entry) = browsing.entries.get(index) else {
+            return;
+        };
+        if !entry.is_directory {
+            return;
+        }
+        browsing.at = entry.number;
+        self.show_browse(window);
+    }
+
+    /// Goes to the directory above.
+    fn browse_up(&mut self, window: &Window) {
+        let Some(browsing) = &mut self.browsing else {
+            return;
+        };
+        let Some(entry) = browsing.index.entry(browsing.at) else {
+            return;
+        };
+        if entry.parent == browsing.at {
+            return;
+        }
+        browsing.at = entry.parent;
+        self.show_browse(window);
+    }
+
+    /// Copies what is selected out of the backup.
+    fn browse_extract(&mut self, window: &Window) {
+        if let Some(running) = &self.worker {
+            message_box::warn(window.raw(), "MjolnirVSS", running.describe());
+            return;
+        }
+        let Some(index) = sys::list_selected(self.controls.browse_list) else {
+            message_box::info(
+                window.raw(),
+                "MjolnirVSS",
+                "Choose a file or a folder in the list first.",
+            );
+            return;
+        };
+        let Some(browsing) = &self.browsing else {
+            return;
+        };
+        let Some(entry) = browsing.entries.get(index).cloned() else {
+            return;
+        };
+
+        let Ok(Some(into)) = shell::pick_folder(window.raw(), "Choose where to put the files")
+        else {
+            return;
+        };
+
+        let source = browsing
+            .index
+            .path_of(entry.number)
+            .unwrap_or_else(|| entry.name.clone());
+        let backup = browsing.backup.clone();
+        let stream_id = browsing.stream_id.clone();
+
+        sys::set_text(self.controls.stage, "Copying...");
+        sys::set_text(self.controls.stats, "");
+        sys::set_text(self.controls.details, "");
+        sys::set_progress(self.controls.progress, 0);
+        sys::set_progress_state(self.controls.progress, ProgressState::Normal);
+        sys::enable(self.controls.cancel, true);
+        sys::set_text(self.controls.cancel, "Cancel");
+        self.finished = None;
+
+        self.worker = Some(Job::Extract(Worker::start(move |progress, cancel| {
+            let set = mjolnir_image::BackupSet::open(&backup)?;
+            let stream = mjolnir_files::stream_in(&set, &stream_id)?;
+            let mut open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
+            let Some(entry) = open.index().resolve(&source).cloned() else {
+                return Err(Error::new(
+                    ExitCode::Failure,
+                    "that file is no longer in the backup",
+                    format!("{source} could not be found when it came to copying it"),
+                    "open the backup again and try once more",
+                ));
+            };
+            let options = mjolnir_files::ExtractOptions::default();
+            if entry.is_directory {
+                mjolnir_files::extract_tree(&mut open, &entry, &into, &options, progress, cancel)
+            } else {
+                let mut outcome = mjolnir_files::ExtractOutcome::default();
+                for result in mjolnir_files::extract_file(
+                    &mut open, &entry, &into, &options, progress, cancel,
+                )? {
+                    if let mjolnir_files::Extracted::Written { bytes, .. } = &result {
+                        outcome.bytes_written += bytes;
+                    }
+                    outcome.files.push(result);
+                }
+                Ok(outcome)
+            }
+        })));
+
+        self.show_screen(window, Screen::Progress);
+        window.set_timer(TIMER_PROGRESS, TIMER_INTERVAL);
+    }
+
+    /// The result screen for a finished extraction.
+    fn show_extract_result(
+        &mut self,
+        window: &Window,
+        result: std::result::Result<mjolnir_files::ExtractOutcome, Error>,
+    ) {
+        match &result {
+            Ok(outcome) => {
+                sys::set_text(
+                    self.controls.result_title,
+                    if outcome.everything_worked() {
+                        "Files copied"
+                    } else {
+                        "Some files could not be copied"
+                    },
+                );
+                let mut body = format!("{}\r\n", outcome.summary());
+                let mut shown = 0;
+                for file in &outcome.files {
+                    if shown >= 60 {
+                        body.push_str("\r\n...and more; see the details view.");
+                        break;
+                    }
+                    body.push_str(&format!("\r\n{}", file.describe()));
+                    shown += 1;
+                }
+                sys::set_text(self.controls.result_body, &body);
+                sys::enable(self.controls.open_folder, false);
+            }
+            Err(e) => {
+                let title = if e.exit() == ExitCode::Cancelled {
+                    "Copying cancelled"
+                } else {
+                    "The files could not be copied"
+                };
+                sys::set_text(self.controls.result_title, title);
+                sys::set_text(self.controls.result_body, &message_box::format_error(e));
+                sys::enable(self.controls.open_folder, false);
+            }
+        }
+        self.finished = Some(JobResult::Extract(result));
+        self.show_screen(window, Screen::Result);
+    }
+
     fn toggle_details(&mut self, window: &Window) {
         self.show_details = !self.show_details;
         sys::set_text(
@@ -975,12 +1435,15 @@ impl WindowHandler for BackupWindow {
         match (id, notification) {
             (ID_BACKUP, _) => self.begin_backup_setup(window),
             (ID_RECOVERY_MEDIA, _) | (ID_MAKE_MEDIA, _) => self.make_recovery_media(window),
-            (ID_RESTORE_FILES, _) => {
-                message_box::info(
-                    window.raw(),
-                    "MjolnirVSS",
-                    "Restoring individual files from a backup is not built yet.\n\nTo get a whole computer back, start it from recovery media and use MjolnirVSS.Restore.exe.",
-                );
+            (ID_RESTORE_FILES, _) => self.browse_backup(window),
+            (ID_BROWSE_OPEN, _) | (ID_BROWSE_LIST, LBN_DBLCLK) => {
+                self.browse_open_selected(window)
+            }
+            (ID_BROWSE_UP, _) => self.browse_up(window),
+            (ID_BROWSE_EXTRACT, _) => self.browse_extract(window),
+            (ID_BROWSE_BACK, _) => {
+                self.browsing = None;
+                self.show_screen(window, Screen::Menu);
             }
             (ID_SETTINGS, _) => message_box::info(
                 window.raw(),

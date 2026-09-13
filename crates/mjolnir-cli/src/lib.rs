@@ -115,6 +115,47 @@ pub enum Command {
 
     /// Report what recovery media could be built from, without building one.
     RecoverySources,
+
+    /// List the partitions inside a backup that can be browsed.
+    Volumes {
+        /// The backup folder.
+        path: PathBuf,
+    },
+
+    /// List what is inside a folder of a backed up volume.
+    ///
+    /// Reads the backup. Nothing is written and the backup is never modified.
+    Browse {
+        /// The backup folder.
+        path: PathBuf,
+        /// Which partition, as shown by the volumes command.
+        #[arg(long)]
+        volume: String,
+        /// The folder to list. Defaults to the root of the volume.
+        #[arg(long, default_value = "\\")]
+        folder: String,
+    },
+
+    /// Copy a file or folder out of a backup.
+    Extract {
+        /// The backup folder.
+        path: PathBuf,
+        /// Which partition, as shown by the volumes command.
+        #[arg(long)]
+        volume: String,
+        /// What to copy, as a path inside that partition.
+        #[arg(long)]
+        item: String,
+        /// Where to put it. A folder that already exists.
+        #[arg(long)]
+        into: PathBuf,
+        /// Replace a file that is already there.
+        #[arg(long)]
+        overwrite: bool,
+        /// Copy a junction or a link's target instead of skipping it.
+        #[arg(long)]
+        follow_links: bool,
+    },
 }
 
 /// Parses `args` and runs the command, returning the process exit code.
@@ -176,6 +217,30 @@ pub fn run(cli: Cli) -> ExitCode {
             cmd_recovery_media(&cli, iso, from.as_deref(), progress.as_mut(), &cancel)
         }
         Command::RecoverySources => cmd_recovery_sources(&cli),
+        Command::Volumes { path } => cmd_volumes(&cli, path),
+        Command::Browse {
+            path,
+            volume,
+            folder,
+        } => cmd_browse(&cli, path, volume, folder, &cancel),
+        Command::Extract {
+            path,
+            volume,
+            item,
+            into,
+            overwrite,
+            follow_links,
+        } => cmd_extract(
+            &cli,
+            path,
+            volume,
+            item,
+            into,
+            *overwrite,
+            *follow_links,
+            progress.as_mut(),
+            &cancel,
+        ),
     };
 
     match result {
@@ -825,6 +890,222 @@ fn cmd_recovery_media(
     }
 
     if report.passed() {
+        Ok(ExitCode::Success)
+    } else {
+        Ok(ExitCode::CorruptBackup)
+    }
+}
+
+fn cmd_volumes(cli: &Cli, path: &Path) -> Result<ExitCode> {
+    let set = mjolnir_image::BackupSet::open(path)?;
+    let volumes = mjolnir_files::volumes_in(&set);
+
+    if cli.json {
+        let value = serde_json::json!({
+            "volumes": volumes.iter().map(|v| serde_json::json!({
+                "stream_id": v.stream_id,
+                "partition": v.partition_number,
+                "role": v.role,
+                "drive_letter": v.drive_letter,
+                "label": v.label,
+                "filesystem": v.filesystem,
+                "size_bytes": v.size_bytes,
+                "readable": v.is_readable,
+                "why_not": v.why_not,
+            })).collect::<Vec<_>>(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+        return Ok(ExitCode::Success);
+    }
+
+    println!("Partitions in {}:", path.display());
+    for volume in &volumes {
+        println!("  {}", volume.describe());
+        println!("    id: {}", volume.stream_id);
+        match &volume.why_not {
+            Some(why) => println!("    cannot be browsed: {why}"),
+            None => println!("    can be browsed"),
+        }
+    }
+    Ok(ExitCode::Success)
+}
+
+fn cmd_browse(
+    cli: &Cli,
+    path: &Path,
+    volume: &str,
+    folder: &str,
+    cancel: &CancelToken,
+) -> Result<ExitCode> {
+    let set = mjolnir_image::BackupSet::open(path)?;
+    let stream = mjolnir_files::stream_in(&set, volume)?;
+    let open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
+    let index = open.index();
+
+    let entry = index.resolve(folder).ok_or_else(|| {
+        Error::new(
+            ExitCode::Failure,
+            "that folder is not in the backup",
+            format!("{folder} was not found in {volume}"),
+            "check the path, or browse from the root with --folder \\",
+        )
+    })?;
+
+    let children = index.children_of(entry.number);
+
+    if cli.json {
+        let value = serde_json::json!({
+            "folder": index.path_of(entry.number),
+            "entries": children.iter().map(|e| serde_json::json!({
+                "name": e.name,
+                "directory": e.is_directory,
+                "size": e.size,
+                "readable": e.is_readable(),
+                "why_not": e.why_unreadable(),
+                "reparse_point": e.is_reparse_point,
+                "compressed": e.is_compressed,
+                "encrypted": e.is_encrypted,
+                "sparse": e.is_sparse,
+                "hard_linked": e.is_hard_linked,
+                "streams": e.streams.iter().map(|(n, s)| serde_json::json!({"name": n, "size": s})).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+        return Ok(ExitCode::Success);
+    }
+
+    println!(
+        "{}  ({} items)",
+        index
+            .path_of(entry.number)
+            .unwrap_or_else(|| folder.to_owned()),
+        children.len()
+    );
+    for child in children {
+        let kind = if child.is_directory { "<DIR>" } else { "     " };
+        let size = if child.is_directory {
+            String::new()
+        } else {
+            mjolnir_core::progress::format_bytes(child.size)
+        };
+        let mut notes = Vec::new();
+        if child.is_reparse_point {
+            notes.push("link");
+        }
+        if child.is_compressed {
+            notes.push("compressed");
+        }
+        if child.is_encrypted {
+            notes.push("encrypted");
+        }
+        if child.is_sparse {
+            notes.push("sparse");
+        }
+        if child.is_hard_linked {
+            notes.push("hard linked");
+        }
+        if !child.streams.is_empty() {
+            notes.push("has streams");
+        }
+        let note = if notes.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", notes.join(", "))
+        };
+        println!("  {kind} {size:>12}  {}{note}", child.name);
+    }
+    if !index.unreadable.is_empty() {
+        println!();
+        println!(
+            "  {} records in this volume could not be read.",
+            index.unreadable.len()
+        );
+    }
+    Ok(ExitCode::Success)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_extract(
+    cli: &Cli,
+    path: &Path,
+    volume: &str,
+    item: &str,
+    into: &Path,
+    overwrite: bool,
+    follow_links: bool,
+    progress: &mut dyn Progress,
+    cancel: &CancelToken,
+) -> Result<ExitCode> {
+    if !into.is_dir() {
+        return Err(Error::new(
+            ExitCode::Failure,
+            "the folder to copy into does not exist",
+            format!("{} is not a folder", into.display()),
+            "make the folder first, or choose one that is already there",
+        ));
+    }
+
+    let set = mjolnir_image::BackupSet::open(path)?;
+    let stream = mjolnir_files::stream_in(&set, volume)?;
+    let mut open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
+
+    let entry = open.index().resolve(item).cloned().ok_or_else(|| {
+        Error::new(
+            ExitCode::Failure,
+            "that file is not in the backup",
+            format!("{item} was not found in {volume}"),
+            "use the browse command to see what is there",
+        )
+    })?;
+
+    let options = mjolnir_files::ExtractOptions {
+        include_streams: true,
+        follow_reparse_points: follow_links,
+        overwrite,
+    };
+
+    let outcome = if entry.is_directory {
+        mjolnir_files::extract_tree(&mut open, &entry, into, &options, progress, cancel)?
+    } else {
+        let mut outcome = mjolnir_files::ExtractOutcome::default();
+        for result in
+            mjolnir_files::extract_file(&mut open, &entry, into, &options, progress, cancel)?
+        {
+            if let mjolnir_files::Extracted::Written { bytes, .. } = &result {
+                outcome.bytes_written += bytes;
+            }
+            outcome.files.push(result);
+        }
+        outcome
+    };
+
+    if cli.json {
+        let value = serde_json::json!({
+            "written": outcome.written(),
+            "skipped": outcome.skipped(),
+            "failed": outcome.failed(),
+            "bytes_written": outcome.bytes_written,
+            "files": outcome.files.iter().map(|f| f.describe()).collect::<Vec<_>>(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+    } else {
+        for file in &outcome.files {
+            println!("  {}", file.describe());
+        }
+        println!();
+        println!("{}", outcome.summary());
+    }
+
+    if outcome.everything_worked() {
         Ok(ExitCode::Success)
     } else {
         Ok(ExitCode::CorruptBackup)

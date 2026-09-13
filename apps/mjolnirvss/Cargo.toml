@@ -20,6 +20,8 @@ mjolnir-image = { workspace = true }
 mjolnir-storage = { workspace = true }
 mjolnir-backup = { workspace = true }
 mjolnir-media = { workspace = true }
+mjolnir-files = { workspace = true }
+mjolnir-ntfs = { workspace = true }
 mjolnir-cli = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
