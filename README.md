@@ -68,7 +68,7 @@ onto a blank replacement disk after the original has failed.
 | Used block imaging: skipping free space on NTFS volumes | **Implemented**, proven on a real Windows volume: 14.2 GiB read out of a 62.8 GiB partition, and the result restored and booted |
 | Warning before a backup may cost you restore points | **Implemented and measured** on a real machine |
 | Verification: decompress and checksum every block | **Implemented and tested**, including against deliberately damaged backups |
-| Restoring onto a blank disk | **Implemented**, done from real recovery media onto a blank virtual disk, and the result booted |
+| Restoring onto a blank disk | **Implemented**, done from real recovery media onto blank virtual disks of the same size and of a larger size, and both booted |
 | Rebuilding the partition table on the replacement disk | **Implemented**, and the restored table checked partition by partition against the original |
 | Refusing unsafe restore targets | **Implemented and tested** |
 | Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |

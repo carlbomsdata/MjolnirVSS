@@ -59,10 +59,10 @@ still missing is below.
 
 ### 1. The same thing again, and differently
 
-One pass is a demonstration, not evidence. The restore has to be repeated onto a
-larger disk, onto a disk whose sector size differs, and after a backup taken
-while the machine was busy. A restore that has been done once may have been
-lucky.
+Restoring onto a larger disk has been done, and booted. What is left is a target
+whose sector size differs from the source's, and a backup taken while the
+machine is genuinely busy rather than idle. A restore that has been done twice
+on one machine may still have been lucky.
 
 ### 2. Backup encryption
 
