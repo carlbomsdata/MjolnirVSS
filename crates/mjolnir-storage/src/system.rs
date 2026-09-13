@@ -94,9 +94,13 @@ pub fn firmware_mode() -> FirmwareMode {
 /// is not a reason to refuse a backup.
 pub fn windows_info() -> WindowsInfo {
     let key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    let build = read_registry_string(key, "CurrentBuild");
     WindowsInfo {
-        product_name: read_registry_string(key, "ProductName"),
-        build: read_registry_string(key, "CurrentBuild"),
+        product_name: corrected_product_name(
+            read_registry_string(key, "ProductName"),
+            build.as_deref(),
+        ),
+        build,
         edition: read_registry_string(key, "EditionID"),
         architecture: Some(
             if cfg!(target_arch = "x86_64") {
@@ -106,6 +110,35 @@ pub fn windows_info() -> WindowsInfo {
             }
             .to_owned(),
         ),
+    }
+}
+
+/// The build number at which Windows 11 begins.
+const FIRST_WINDOWS_11_BUILD: u32 = 22000;
+
+/// Windows 11 still calls itself Windows 10 in the registry.
+///
+/// `ProductName` under `CurrentVersion` was never updated when Windows 11
+/// shipped: a Windows 11 machine reports `Windows 10 Pro`. Microsoft's guidance
+/// is to go by the build number instead, and 22000 is where Windows 11 starts.
+///
+/// This matters more here than it would in a status line. The name is written
+/// into every manifest, so without it a backup of a Windows 11 machine would
+/// say for ever that it came from Windows 10, and somebody reading that backup
+/// years later has no way to tell it was wrong.
+///
+/// The `Windows 10` test is what keeps Server out of it. Windows Server 2025 is
+/// build 26100, the same build as Windows 11 24H2, but calls itself
+/// `Windows Server 2025 Standard` and so is left exactly as it is.
+fn corrected_product_name(product_name: Option<String>, build: Option<&str>) -> Option<String> {
+    let name = product_name?;
+    let build_number: u32 = build
+        .and_then(|b| b.trim().parse().ok())
+        .unwrap_or_default();
+    if build_number >= FIRST_WINDOWS_11_BUILD && name.contains("Windows 10") {
+        Some(name.replace("Windows 10", "Windows 11"))
+    } else {
+        Some(name)
     }
 }
 
@@ -391,5 +424,57 @@ mod tests {
             Some("NTFS"),
             "the Windows volume should be NTFS"
         );
+    }
+    /// The bug this exists for: a real Windows 11 24H2 test machine reported
+    /// itself as "Windows 10 Pro (build 26100)" in every backup it took.
+    #[test]
+    fn windows_11_is_not_called_windows_10() {
+        assert_eq!(
+            corrected_product_name(Some("Windows 10 Pro".to_owned()), Some("26100")),
+            Some("Windows 11 Pro".to_owned())
+        );
+        assert_eq!(
+            corrected_product_name(Some("Windows 10 Home".to_owned()), Some("22000")),
+            Some("Windows 11 Home".to_owned())
+        );
+    }
+
+    /// A real Windows 10 is left alone. 19045 is 22H2, the last of them.
+    #[test]
+    fn windows_10_is_still_called_windows_10() {
+        assert_eq!(
+            corrected_product_name(Some("Windows 10 Pro".to_owned()), Some("19045")),
+            Some("Windows 10 Pro".to_owned())
+        );
+    }
+
+    /// Server 2025 shares build 26100 with Windows 11 24H2 and must not be
+    /// renamed. This is why the correction looks at the name and not only the
+    /// number.
+    #[test]
+    fn windows_server_is_never_renamed() {
+        for (name, build) in [
+            ("Windows Server 2025 Standard", "26100"),
+            ("Windows Server 2022 Datacenter", "20348"),
+            ("Windows Server 2019 Standard", "17763"),
+        ] {
+            assert_eq!(
+                corrected_product_name(Some(name.to_owned()), Some(build)),
+                Some(name.to_owned()),
+                "{name} must be left alone"
+            );
+        }
+    }
+
+    /// A missing or unreadable build number must not invent a version.
+    #[test]
+    fn an_unknown_build_changes_nothing() {
+        for build in [None, Some(""), Some("not a number")] {
+            assert_eq!(
+                corrected_product_name(Some("Windows 10 Pro".to_owned()), build),
+                Some("Windows 10 Pro".to_owned())
+            );
+        }
+        assert_eq!(corrected_product_name(None, Some("26100")), None);
     }
 }
