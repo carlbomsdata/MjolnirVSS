@@ -4,16 +4,25 @@ Portable bare metal backup and recovery for Windows 10 and Windows 11.
 
 ---
 
-## Status: experimental. Do not rely on it yet.
+## Status: early. Tested in virtual machines, never on real hardware.
 
-**No restored computer has ever been booted from a MjolnirVSS backup.** The
-backup engine, the image format, the verifier and the restore engine all work
-and are tested, but the one test that would make this product trustworthy — take
-a backup of a real Windows installation, restore it onto a blank disk, and watch
-Windows start — has not been carried out.
+**A restored Windows has now been booted from a MjolnirVSS backup.** On
+13 September 2026, in a disposable VMware virtual machine: a live backup of a
+running Windows 11, taken through the shadow copy service with used block
+imaging; recovery media built by MjolnirVSS from this computer's own Windows
+parts; the backup restored onto a blank 64 GB disk from that media, driven from
+the keyboard in Windows PE; and the machine started on its own, with no repair.
 
-Until that happens, treat MjolnirVSS as a thing to experiment with on a virtual
-machine, not as the backup of anything you care about. Keep another backup.
+Everything the restored machine was checked for came back right: all twelve test
+files matched the hashes taken when they were made, every partition kept its
+unique identifier, offset and size, the EFI partition held its boot files, the
+boot configuration named the Windows loader, and the Windows Recovery
+Environment was still registered.
+
+That is one machine, once, and it was a virtual one. **No real computer has been
+restored.** Firmware differs, disks differ, and a virtual NVMe disk is not a
+Samsung one. Treat MjolnirVSS as something to test on a machine you can afford
+to lose, and keep another backup.
 
 What that means in practice is set out honestly below, feature by feature.
 
@@ -56,18 +65,18 @@ onto a blank replacement disk after the original has failed.
 |---|---|
 | Consistent live backup using VSS | **Implemented**, proven against a real Windows 11 machine |
 | Capturing the full GPT layout, EFI, MSR, Windows and recovery partitions | **Implemented**, tested against synthetic disks |
-| Used block imaging: skipping free space on NTFS volumes | **Implemented**, tested end to end against synthetic NTFS volumes; not yet run against a real Windows volume |
+| Used block imaging: skipping free space on NTFS volumes | **Implemented**, proven on a real Windows volume: 14.2 GiB read out of a 62.8 GiB partition, and the result restored and booted |
 | Warning before a backup may cost you restore points | **Implemented and measured** on a real machine |
 | Verification: decompress and checksum every block | **Implemented and tested**, including against deliberately damaged backups |
-| Restoring onto a blank disk | **Implemented**, tested against virtual disks only |
-| Rebuilding the partition table on the replacement disk | **Implemented**, tested against virtual disks only |
+| Restoring onto a blank disk | **Implemented**, done from real recovery media onto a blank virtual disk, and the result booted |
+| Rebuilding the partition table on the replacement disk | **Implemented**, and the restored table checked partition by partition against the original |
 | Refusing unsafe restore targets | **Implemented and tested** |
 | Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |
-| Graphical recovery wizard | **Implemented**, **never run inside Windows PE** |
-| **Booting a restored Windows** | **Never tested. This is the gate that matters.** |
-| Repairing UEFI boot configuration after a restore | **Not implemented.** If Windows does not start, you run Startup Repair yourself |
-| Restoring individual files from a backup | **Not implemented.** The index format is designed; the browser is not built |
-| Creating recovery media | **Not implemented.** Use Microsoft's Media Creation Tool and copy the recovery program onto it |
+| Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore from the keyboard |
+| **Booting a restored Windows** | **Done once, in a virtual machine.** Never on real hardware |
+| Repairing UEFI boot configuration after a restore | **Implemented**, and not yet needed: the restore that was booted needed no repair |
+| Restoring individual files from a backup | **Implemented**, proven against a real Windows volume out of a real backup |
+| Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
 | BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |
 | BitLocker: locked volume | **Refused**, clearly |
 | Incremental backups | Not implemented, and deliberately not started until the above works |

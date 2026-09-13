@@ -29,58 +29,67 @@ reliably.
   the whole volume where that cannot be established.
 - A warning before a backup when taking a shadow copy may cost the machine its
   restore points, which was measured rather than anticipated.
-- The backup window and the recovery wizard.
+- The backup window and the recovery wizard, the latter run in real Windows PE
+  and driven through a whole restore from the keyboard.
+- File recovery: browsing a backup's NTFS volumes read only and copying files
+  out, proven against a real Windows volume with every file checked by hash.
+- Recovery media built from the Windows parts already on the machine, booted on
+  UEFI firmware.
+
+---
+
+## The gate, which has been passed once
+
+**A restored Windows has been booted.** In a disposable virtual machine on
+13 September 2026: a live backup of a running Windows 11, recovery media built
+by MjolnirVSS from this computer's own Windows parts, the backup restored onto a
+blank disk from that media with the keyboard alone, and the machine started
+unaided. Twelve of twelve test files matched their hashes, every partition kept
+its identifier, offset and size, and the recovery environment was still
+registered. The run is described in [`vm-testing.md`](vm-testing.md).
+
+Once, in a virtual machine, is not the same as reliably, on hardware. What is
+still missing is below.
 
 ---
 
 ## Next, in order
 
-### 1. Boot a restored Windows
+### 1. The same thing again, and differently
 
-**The gate.** Everything below is worthless until this passes, and nothing below
-should be started before it does.
+One pass is a demonstration, not evidence. The restore has to be repeated onto a
+larger disk, onto a disk whose sector size differs, and after a backup taken
+while the machine was busy. A restore that has been done once may have been
+lucky.
 
-Back up a real Windows installation in a virtual machine, restore it onto a blank
-virtual disk, start it, and see what happens. The procedure is written out in
-[`testing.md`](testing.md). The result goes in the README whichever way it goes.
+### 2. Prove the boot repair, by needing it
 
-Expected to need work on the UEFI boot configuration, which is item 2.
+Boot repair is implemented and was not needed, which means it has never run for
+real. A restore has to be broken deliberately — the boot entries removed from
+the restored EFI partition — so that the repair is what makes the machine start.
+Code that has never been the thing that mattered is not tested.
 
-### 2. Repair the boot configuration after a restore
+### 3. Backup encryption
 
-Today, if the restored machine does not start, the operator runs Startup Repair
-by hand. MjolnirVSS should do it: recreate the boot entries on the restored EFI
-partition using documented Windows mechanisms, and check the result before
-saying the restore succeeded.
+A real gap. The password is never stored, the design uses nothing home made, and
+it sits here rather than earlier because an encrypted backup that cannot be
+restored is worse than a plain one that can.
 
-### 3. Run the recovery application in Windows PE
+### 4. Controlled hardware validation
 
-Its imports contain nothing Windows PE lacks, which is evidence, not proof. It
-has to be booted and run.
+Everything above happens in virtual machines. Real firmware, real disks, real
+failures.
 
-### 4. File recovery
+### 5. Recovery media on a USB stick
 
-Browse a backup's volumes read only and extract files. Needs a master file table
-reader, which is the part of NTFS used block imaging did not need. Designed in
-[`file-recovery.md`](file-recovery.md).
-
-### 5. Recovery media creation
-
-Build a bootable USB from the recovery image already on the machine. ISO output
-only when the Windows ADK is present, because `oscdimg.exe` cannot be
-redistributed. Designed in [`recovery-media.md`](recovery-media.md).
-
-### 6. Controlled hardware validation
-
-A restore onto a real replacement disk in a real machine, done deliberately, with
-the result recorded.
+ISO output works and has been booted. Writing a USB stick erases it, so it needs
+the same confirmation a restore does, and it is behind the work above. Designed
+in [`recovery-media.md`](recovery-media.md).
 
 ---
 
 ## After that
 
-- **Encryption.** A real gap, deliberately behind the restore path: an encrypted
-  backup that cannot be restored is worse than an unencrypted one that can.
 - **Incremental backups.** The format was built for this. Blocks are content
   addressed and cut on stable boundaries, so an unchanged region produces the
   same block, and `chunk_store.root` is a field so several backups of a machine

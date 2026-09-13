@@ -171,6 +171,27 @@ the one the whole thing exists for.
 
 ---
 
+## What the harness has proven
+
+On 13 September 2026, in one run:
+
+| | |
+|---|---|
+| A live backup of a running Windows 11 | 62.8 GiB partition, 14.2 GiB read: 3,722,337 of 16,460,799 clusters across 17,345 extents. Verified, and a copy with one chunk removed was refused |
+| Files out of that backup | 12 written, 3 correctly refused, every one checked against the hash taken when it was made |
+| Recovery media | Built from this computer's own Windows parts, booted on UEFI firmware, the application drawn and driven from the keyboard |
+| A restore onto a blank disk | 14.9 GiB written, four partitions, driven through the wizard with Tab and Enter |
+| **The restored Windows starting** | **It started, unaided.** No boot repair was needed |
+| The restored machine, checked | 12 of 12 files matched by hash; every partition kept its type GUID, unique GUID, offset and size; the EFI partition held `bootmgfw.efi`, `bootx64.efi` and the BCD; the boot entry named `winload.efi`; Windows RE was still registered at `harddisk0\partition4` |
+
+The compressed file is worth a note. File recovery refuses it, because handing
+back stored clusters would hand back something that is not the file. The whole
+disk restore reproduces it exactly, because it does not need to understand it.
+Both are in the numbers above: 12 files recovered individually with one refused,
+and 12 of 12 correct after the restore.
+
+---
+
 ## Throwing it away
 
 The lab is disposable. Delete the lab root and the machines are gone; nothing
