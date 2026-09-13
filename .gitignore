@@ -35,5 +35,3 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# Build output from scripts/package.ps1.
-/dist/
