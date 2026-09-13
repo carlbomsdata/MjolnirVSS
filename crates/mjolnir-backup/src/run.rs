@@ -572,14 +572,24 @@ impl crate::capture::CaptureSources for WindowsSources<'_> {
             extent_length,
         )?;
 
-        // What the volume extent says is the partition's length, and a shadow
-        // copy device is shorter than that: the last sector of the partition
-        // holds NTFS's spare boot sector and is outside the volume. Asking the
-        // device itself is the only way to find out where it really ends, and
-        // reading past it fails with "reached the end of the file".
-        if let Some(length) = device.query_length() {
-            device.set_geometry(0, length);
-        }
+        // How far this device can actually be read.
+        //
+        // A shadow copy covers the *filesystem*, and a filesystem is shorter
+        // than the partition holding it: NTFS keeps a spare copy of its boot
+        // sector in the last sector of the partition, outside the volume.
+        // Reading that far through the shadow copy fails with "reached the end
+        // of the file", which is how the first backup of a real machine ended.
+        //
+        // The device's own answer is not to be trusted here. Measured on a
+        // Windows 11 machine, `IOCTL_DISK_GET_LENGTH_INFO` on a shadow copy
+        // device reports the whole partition, and reads past the filesystem
+        // still fail. So the filesystem is asked instead, and the device is
+        // only consulted when the volume is not one this version reads.
+        let readable = snapshot_readable_bytes(&device, self.plan.disk.logical_sector_size)
+            .unwrap_or(extent_length)
+            .min(extent_length);
+        device.set_geometry(0, readable);
+
         Ok(Some(Box::new(device)))
     }
 
@@ -633,6 +643,25 @@ impl crate::capture::CaptureSources for WindowsSources<'_> {
         let allocation = mjolnir_storage::allocation::read_allocation(&device, &self.cancel)?;
         let plan = mjolnir_ntfs::plan_used_blocks(&boot, &allocation, partition.partition.length)?;
         Ok(Some(plan))
+    }
+}
+
+/// How much of a snapshot device can be read, from the filesystem inside it.
+///
+/// Returns `None` when the volume is not one this version understands, in which
+/// case the caller falls back to what Windows said the extent was.
+#[cfg(windows)]
+fn snapshot_readable_bytes(device: &Device, sector_size: u32) -> Option<u64> {
+    let mut sector = vec![0u8; sector_size.max(512) as usize];
+    device.read_at(0, &mut sector).ok()?;
+
+    match mjolnir_ntfs::NtfsBootSector::parse(&sector) {
+        // The filesystem's own idea of its size, which is where a shadow copy
+        // of it stops.
+        Ok(boot) => boot.volume_bytes().ok(),
+        // Not NTFS, or not readable. The device's answer is better than
+        // nothing.
+        Err(_) => device.query_length(),
     }
 }
 
