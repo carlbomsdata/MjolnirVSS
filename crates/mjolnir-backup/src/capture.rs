@@ -14,6 +14,7 @@
 use mjolnir_core::blockio::BlockSource;
 use mjolnir_core::cancel::CancelToken;
 use mjolnir_core::error::{Error, Result};
+use mjolnir_core::extents::ByteRange;
 use mjolnir_core::ids::{DiskId, PartitionId, StreamId};
 use mjolnir_core::math;
 use mjolnir_core::progress::Progress;
@@ -147,9 +148,29 @@ pub fn capture_disk(
 
         // Either a consistent source for this partition, or the disk itself at
         // the partition's offset.
-        let (mut source, source_offset) = match sources.open_partition(index)? {
+        let snapshot = sources.open_partition(index)?;
+        let reading_a_snapshot = snapshot.is_some();
+        let (mut source, source_offset) = match snapshot {
             Some(source) => (source, 0u64),
             None => (sources.open_disk()?, partition.starting_offset),
+        };
+
+        // A shadow copy device is as long as the *volume*, and a volume is a
+        // little shorter than the partition holding it: NTFS keeps a spare copy
+        // of its boot sector in the last sector of the partition, outside the
+        // filesystem. Reading that far through the shadow copy fails with "the
+        // end of the file", so the tail comes from the disk instead. Windows
+        // does not write to it while it is running, which is the same argument
+        // the boot partitions are captured under.
+        let snapshot_covers = if reading_a_snapshot {
+            source.size_bytes()
+        } else {
+            u64::MAX
+        };
+        let mut disk_for_tail = if reading_a_snapshot && snapshot_covers < capture.planned_bytes {
+            Some(sources.open_disk()?)
+        } else {
+            None
         };
 
         let mut stream = writer.begin_stream(
@@ -163,12 +184,16 @@ pub fn capture_disk(
             capture.source_description.clone(),
         );
 
+        let whole = [ByteRange::new(0, capture.planned_bytes)];
         match used {
             UsedBlockDecision::Use(plan) => {
                 stream.set_used_blocks(used_block_info(&plan)?);
-                copy_extents(
+                copy_ranges(
                     source.as_mut(),
                     source_offset,
+                    &mut disk_for_tail,
+                    partition.starting_offset,
+                    snapshot_covers,
                     plan.extents.ranges(),
                     &mut stream,
                     progress,
@@ -183,20 +208,26 @@ pub fn capture_disk(
             }
             UsedBlockDecision::FallBack(reason) => {
                 stream.fall_back_to(CaptureMethod::VssRaw, reason);
-                copy_range(
+                copy_ranges(
                     source.as_mut(),
                     source_offset,
-                    capture.planned_bytes,
+                    &mut disk_for_tail,
+                    partition.starting_offset,
+                    snapshot_covers,
+                    &whole,
                     &mut stream,
                     progress,
                     cancel,
                 )?;
             }
             UsedBlockDecision::NotWanted => {
-                copy_range(
+                copy_ranges(
                     source.as_mut(),
                     source_offset,
-                    capture.planned_bytes,
+                    &mut disk_for_tail,
+                    partition.starting_offset,
+                    snapshot_covers,
+                    &whole,
                     &mut stream,
                     progress,
                     cancel,
@@ -252,10 +283,20 @@ fn used_block_info(plan: &UsedBlockPlan) -> Result<mjolnir_image::manifest::Used
 /// `ranges` are offsets within the stream. They are required to be ascending
 /// and non overlapping, which is what [`ExtentList`](mjolnir_core::extents::ExtentList)
 /// guarantees, and the stream writer checks again on every segment.
-fn copy_extents(
-    source: &mut dyn BlockSource,
-    source_offset: u64,
-    ranges: &[mjolnir_core::extents::ByteRange],
+///
+/// Two sources, because one of them may not reach the end of the partition. A
+/// shadow copy device is as long as the volume, and the last sector of the
+/// partition is outside the volume. Anything at or past `primary_covers` is
+/// read from `tail` instead, at `partition_offset` plus the offset within the
+/// stream.
+#[allow(clippy::too_many_arguments)]
+fn copy_ranges(
+    primary: &mut dyn BlockSource,
+    primary_offset: u64,
+    tail: &mut Option<Box<dyn BlockSource>>,
+    partition_offset: u64,
+    primary_covers: u64,
+    ranges: &[ByteRange],
     stream: &mut mjolnir_image::writer::StreamWriter<'_>,
     progress: &mut dyn Progress,
     cancel: &CancelToken,
@@ -270,13 +311,33 @@ fn copy_extents(
             cancel.check()?;
             // Cut on multiples of the chunk size measured from the start of the
             // stream, so the same region produces the same chunk boundaries in
-            // every backup regardless of where an extent happens to begin.
+            // every backup regardless of where a range happens to begin.
             let to_boundary = chunk_size - (at % chunk_size);
-            let want = to_boundary.min(end - at);
+            let mut want = to_boundary.min(end - at);
+
+            // A piece must not straddle the point where the source changes.
+            if at < primary_covers && at + want > primary_covers {
+                want = primary_covers - at;
+            }
             let slice = &mut buffer[..math::to_usize("chunk length", want)?];
 
-            let from = math::add_u64("copy offset", source_offset, at)?;
-            source.read_exact_at(from, slice)?;
+            if at < primary_covers {
+                let from = math::add_u64("copy offset", primary_offset, at)?;
+                primary.read_exact_at(from, slice)?;
+            } else {
+                let Some(tail) = tail.as_deref_mut() else {
+                    return Err(Error::new(
+                        mjolnir_core::ExitCode::Failure,
+                        "a partition is longer than the thing it is being read from",
+                        format!(
+                            "byte {at} of the partition is past the {primary_covers} bytes the source covers, and no disk was opened to read the rest"
+                        ),
+                        "this is an internal error; please report it with the command you ran",
+                    ));
+                };
+                let from = math::add_u64("copy offset", partition_offset, at)?;
+                tail.read_exact_at(from, slice)?;
+            }
 
             stream.write_segment(at, slice)?;
             progress.advance(want);
@@ -454,6 +515,191 @@ mod tests {
             tail_bytes: 64 * 1024,
             partitions: captures,
         }
+    }
+
+    /// Sources whose snapshot of a partition is shorter than the partition, the
+    /// way a real shadow copy is.
+    ///
+    /// A shadow copy device covers the volume, and NTFS keeps a spare copy of
+    /// its boot sector in the last sector of the partition, outside the volume.
+    /// Reading that far through the shadow copy fails, which is what happened
+    /// the first time a backup ran against a real Windows machine.
+    struct ShortSnapshotSources {
+        disk: MemoryBlockDevice,
+        /// Where the partition begins on the disk.
+        partition_offset: u64,
+        /// How much of it the snapshot covers.
+        covers: u64,
+    }
+
+    impl CaptureSources for ShortSnapshotSources {
+        fn open_disk(&mut self) -> Result<Box<dyn BlockSource>> {
+            Ok(Box::new(self.disk.clone()))
+        }
+
+        fn open_partition(&mut self, _index: usize) -> Result<Option<Box<dyn BlockSource>>> {
+            // The snapshot holds the same bytes as the partition, but stops
+            // short of its end.
+            let mut bytes = vec![0u8; self.covers as usize];
+            self.disk.read_exact_at(self.partition_offset, &mut bytes)?;
+            Ok(Some(Box::new(MemoryBlockDevice::from_vec(
+                "snapshot", bytes, 512,
+            ))))
+        }
+    }
+
+    /// The regression test for the failure a real machine produced: a capture
+    /// must reach the end of the partition even when the snapshot does not.
+    #[test]
+    fn a_snapshot_shorter_than_its_partition_still_captures_the_last_sector() {
+        let partition_offset = 1u64 << 20;
+        let partition_length = 4u64 << 20;
+        let covers = partition_length - 512;
+
+        // Recognisable bytes at the very end of the partition, which only the
+        // disk can supply.
+        let mut disk = MemoryBlockDevice::zeroed("disk", 16 << 20, 512);
+        let mut spare = vec![0u8; 512];
+        spare[..8].copy_from_slice(b"SPAREBOO");
+        spare[510] = 0x55;
+        spare[511] = 0xAA;
+        let at = (partition_offset + partition_length - 512) as usize;
+        disk.bytes_mut()[at..at + 512].copy_from_slice(&spare);
+
+        let mut spec = spec_for(16 << 20, &[(partition_offset, partition_length)]);
+        spec.partitions[0].capture = CaptureMethod::VssRaw;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut writer = test_writer(tmp.path());
+        let mut sources = ShortSnapshotSources {
+            disk,
+            partition_offset,
+            covers,
+        };
+        let mut progress = mjolnir_core::progress::SilentProgress;
+
+        capture_disk(
+            &spec,
+            &mut sources,
+            &mut writer,
+            &mut progress,
+            &CancelToken::new(),
+        )
+        .expect("the capture should reach the end of the partition");
+
+        let finalized = writer.finalize().unwrap();
+        let manifest = finalized.manifest();
+        let stream = manifest
+            .streams
+            .iter()
+            .find(|s| s.id.as_str() == "s-1")
+            .expect("the partition stream");
+
+        assert_eq!(
+            stream.captured_bytes().unwrap(),
+            partition_length,
+            "the whole partition should have been captured"
+        );
+
+        // And the bytes only the disk could supply really are in there.
+        let store = finalized.chunk_store();
+        let last = stream.segments.last().expect("a last segment");
+        let chunk = &manifest.chunks[last.chunk as usize];
+        let data = store.get(chunk.hash, chunk.uncompressed_size).unwrap();
+        assert_eq!(
+            &data[data.len() - 512..data.len() - 504],
+            b"SPAREBOO",
+            "the spare boot sector did not come from the disk"
+        );
+    }
+
+    /// The same, for a used block capture: the tail is one of the ranges the
+    /// plan deliberately includes, and it has to come from the disk too.
+    #[test]
+    fn used_block_capture_reads_its_tail_from_the_disk() {
+        let partition_offset = 1u64 << 20;
+        let partition_length = 4u64 << 20;
+        let covers = partition_length - 512;
+
+        let mut disk = MemoryBlockDevice::zeroed("disk", 16 << 20, 512);
+        let mut spare = vec![0u8; 512];
+        spare[..8].copy_from_slice(b"SPAREBOO");
+        let at = (partition_offset + partition_length - 512) as usize;
+        disk.bytes_mut()[at..at + 512].copy_from_slice(&spare);
+
+        let mut spec = spec_for(16 << 20, &[(partition_offset, partition_length)]);
+        spec.partitions[0].capture = CaptureMethod::VssUsedBlocks;
+
+        struct WithPlan {
+            inner: ShortSnapshotSources,
+            plan: mjolnir_ntfs::bitmap::UsedBlockPlan,
+        }
+        impl CaptureSources for WithPlan {
+            fn open_disk(&mut self) -> Result<Box<dyn BlockSource>> {
+                self.inner.open_disk()
+            }
+            fn open_partition(&mut self, i: usize) -> Result<Option<Box<dyn BlockSource>>> {
+                self.inner.open_partition(i)
+            }
+            fn used_blocks(&mut self, _i: usize) -> Result<Option<UsedBlockPlan>> {
+                Ok(Some(self.plan.clone()))
+            }
+        }
+
+        // Two ranges: something near the front, and the last sector.
+        let extents = mjolnir_core::extents::ExtentList::from_unsorted(vec![
+            ByteRange::new(0, 65536),
+            ByteRange::new(partition_length - 512, 512),
+        ])
+        .unwrap();
+        let plan = mjolnir_ntfs::bitmap::UsedBlockPlan {
+            extents,
+            cluster_size: 4096,
+            clusters_total: partition_length / 4096,
+            clusters_allocated: 16,
+            described_bytes: partition_length - 4096,
+            undescribed_tail_bytes: 512,
+            reserved_bytes: 512,
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut writer = test_writer(tmp.path());
+        let mut sources = WithPlan {
+            inner: ShortSnapshotSources {
+                disk,
+                partition_offset,
+                covers,
+            },
+            plan,
+        };
+        let mut progress = mjolnir_core::progress::SilentProgress;
+
+        capture_disk(
+            &spec,
+            &mut sources,
+            &mut writer,
+            &mut progress,
+            &CancelToken::new(),
+        )
+        .expect("the capture should reach the end of the partition");
+
+        let finalized = writer.finalize().unwrap();
+        let manifest = finalized.manifest();
+        let stream = manifest
+            .streams
+            .iter()
+            .find(|s| s.id.as_str() == "s-1")
+            .unwrap();
+
+        assert_eq!(stream.capture, CaptureMethod::VssUsedBlocks);
+        assert_eq!(stream.captured_bytes().unwrap(), 65536 + 512);
+
+        let store = finalized.chunk_store();
+        let last = stream.segments.last().unwrap();
+        assert_eq!(last.offset, partition_length - 512);
+        let chunk = &manifest.chunks[last.chunk as usize];
+        let data = store.get(chunk.hash, chunk.uncompressed_size).unwrap();
+        assert_eq!(&data[..8], b"SPAREBOO");
     }
 
     #[test]
