@@ -47,6 +47,11 @@ pub struct PutOutcome {
 pub struct ChunkStore {
     layout: BackupLayout,
     compression: CompressionSpec,
+    /// Present when the backup is encrypted.
+    ///
+    /// Shared rather than copied: key material should exist in one place, and
+    /// a store is handed around by value.
+    keys: Option<std::sync::Arc<mjolnir_crypto::Keys>>,
 }
 
 impl ChunkStore {
@@ -55,6 +60,32 @@ impl ChunkStore {
         Self {
             layout,
             compression,
+            keys: None,
+        }
+    }
+
+    /// The same store, sealing and opening chunks with `keys`.
+    ///
+    /// Chunks are compressed first and sealed second. The other order would
+    /// mean compressing ciphertext, which does not compress.
+    pub fn with_keys(mut self, keys: std::sync::Arc<mjolnir_crypto::Keys>) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// Whether this store seals what it writes.
+    pub fn is_encrypted(&self) -> bool {
+        self.keys.is_some()
+    }
+
+    /// The name `data` is stored under.
+    ///
+    /// An encrypted backup names chunks with a digest keyed by the password, so
+    /// that the names on the drive do not say what the chunks contain.
+    fn name_of(&self, data: &[u8]) -> ChunkHash {
+        match &self.keys {
+            Some(keys) => ChunkHash::from_bytes(keys.name_of(data)),
+            None => ChunkHash::of(data),
         }
     }
 
@@ -93,7 +124,7 @@ impl ChunkStore {
             ));
         }
 
-        let hash = ChunkHash::of(data);
+        let hash = self.name_of(data);
         let final_path = self.layout.chunk_path(hash);
 
         if let Ok(meta) = fs::metadata(&final_path) {
@@ -138,21 +169,32 @@ impl ChunkStore {
         let file = File::create(temp_path).map_err(|e| Error::io(temp_path.display(), e))?;
         let mut writer = io::BufWriter::new(file);
 
-        match self.compression.algorithm {
-            CompressionAlgorithm::Zstd => {
-                let mut encoder = zstd::stream::Encoder::new(&mut writer, self.compression.level)
-                    .map_err(|e| Error::io(temp_path.display(), e))?;
-                encoder
-                    .write_all(data)
-                    .map_err(|e| Error::io(temp_path.display(), e))?;
-                encoder
-                    .finish()
-                    .map_err(|e| Error::io(temp_path.display(), e))?;
-            }
-            CompressionAlgorithm::None => {
-                writer
-                    .write_all(data)
-                    .map_err(|e| Error::io(temp_path.display(), e))?;
+        if let Some(keys) = &self.keys {
+            // Compress into memory, then seal the result. Sealing first would
+            // leave nothing for the compressor to work with.
+            let squeezed = self.compress_to_vec(data, temp_path)?;
+            let sealed = keys.seal(&squeezed)?;
+            writer
+                .write_all(&sealed)
+                .map_err(|e| Error::io(temp_path.display(), e))?;
+        } else {
+            match self.compression.algorithm {
+                CompressionAlgorithm::Zstd => {
+                    let mut encoder =
+                        zstd::stream::Encoder::new(&mut writer, self.compression.level)
+                            .map_err(|e| Error::io(temp_path.display(), e))?;
+                    encoder
+                        .write_all(data)
+                        .map_err(|e| Error::io(temp_path.display(), e))?;
+                    encoder
+                        .finish()
+                        .map_err(|e| Error::io(temp_path.display(), e))?;
+                }
+                CompressionAlgorithm::None => {
+                    writer
+                        .write_all(data)
+                        .map_err(|e| Error::io(temp_path.display(), e))?;
+                }
             }
         }
 
@@ -179,6 +221,15 @@ impl ChunkStore {
         Ok(size)
     }
 
+    /// Compresses into memory, for the encrypted path.
+    fn compress_to_vec(&self, data: &[u8], whose: &Path) -> Result<Vec<u8>> {
+        match self.compression.algorithm {
+            CompressionAlgorithm::Zstd => zstd::stream::encode_all(data, self.compression.level)
+                .map_err(|e| Error::io(whose.display(), e)),
+            CompressionAlgorithm::None => Ok(data.to_vec()),
+        }
+    }
+
     /// Reads a chunk and checks it against `hash` and `expected_size`.
     ///
     /// The decompressor is bounded by `expected_size`, so a manifest that
@@ -203,15 +254,36 @@ impl ChunkStore {
         let mut out = Vec::with_capacity(expected_size as usize);
         let mut reader = io::BufReader::new(file);
 
-        let read_result = match self.compression.algorithm {
-            CompressionAlgorithm::Zstd => {
-                let decoder =
-                    zstd::stream::Decoder::new(reader).map_err(|e| Error::io(path.display(), e))?;
-                // Reading one byte past the limit is what detects a chunk that
-                // decompresses to more than the manifest claims.
-                decoder.take(limit + 1).read_to_end(&mut out)
+        let read_result = if let Some(keys) = &self.keys {
+            // A sealed chunk has to be whole before any of it can be trusted,
+            // so it is read and opened before anything is decompressed. The
+            // seal is checked first: nothing that failed authentication ever
+            // reaches the decompressor.
+            let mut sealed = Vec::new();
+            reader
+                .read_to_end(&mut sealed)
+                .map_err(|e| Error::io(path.display(), e))?;
+            let squeezed = keys.open(&sealed)?;
+            match self.compression.algorithm {
+                CompressionAlgorithm::Zstd => zstd::stream::Decoder::new(squeezed.as_slice())
+                    .map_err(|e| Error::io(path.display(), e))?
+                    .take(limit + 1)
+                    .read_to_end(&mut out),
+                CompressionAlgorithm::None => {
+                    squeezed.as_slice().take(limit + 1).read_to_end(&mut out)
+                }
             }
-            CompressionAlgorithm::None => (&mut reader).take(limit + 1).read_to_end(&mut out),
+        } else {
+            match self.compression.algorithm {
+                CompressionAlgorithm::Zstd => {
+                    let decoder = zstd::stream::Decoder::new(reader)
+                        .map_err(|e| Error::io(path.display(), e))?;
+                    // Reading one byte past the limit is what detects a chunk
+                    // that decompresses to more than the manifest claims.
+                    decoder.take(limit + 1).read_to_end(&mut out)
+                }
+                CompressionAlgorithm::None => (&mut reader).take(limit + 1).read_to_end(&mut out),
+            }
         };
         read_result.map_err(|e| {
             Error::corrupt(
@@ -232,7 +304,7 @@ impl ChunkStore {
             ));
         }
 
-        let actual = ChunkHash::of(&out);
+        let actual = self.name_of(&out);
         if actual != hash {
             return Err(Error::corrupt(
                 format!("chunk {hash} failed its digest check"),
@@ -312,6 +384,120 @@ mod tests {
                 level: 3,
             },
         )
+    }
+
+    /// Fast key settings. What these tests check is the wiring, not Argon2.
+    fn sealed_store_in(dir: &Path, password: &str) -> (ChunkStore, mjolnir_crypto::EncryptionInfo) {
+        let params = mjolnir_crypto::KdfParams {
+            memory_kib: 8 * 1024,
+            passes: 1,
+            lanes: 1,
+        };
+        let started = mjolnir_crypto::begin(password, params).expect("keys");
+        let info = started.info.clone();
+        let store = store_in(dir).with_keys(std::sync::Arc::new(started.keys));
+        (store, info)
+    }
+
+    #[test]
+    fn a_sealed_chunk_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, _) = sealed_store_in(tmp.path(), "a password");
+        assert!(store.is_encrypted());
+
+        let data = vec![7u8; 100_000];
+        let put = store.put(&data).unwrap();
+        assert!(put.written);
+        assert_eq!(store.get(put.hash, data.len() as u32).unwrap(), data);
+    }
+
+    /// The point of the whole thing: what is on the drive must not be the data.
+    #[test]
+    fn what_lands_on_the_drive_is_not_the_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, _) = sealed_store_in(tmp.path(), "a password");
+
+        // Something that would survive compression and be recognisable.
+        let secret = b"the quick brown fox jumps over the lazy dog".repeat(400);
+        let put = store.put(&secret).unwrap();
+
+        let stored = std::fs::read(store.path_of(put.hash)).unwrap();
+        assert!(
+            !contains(&stored, b"quick brown fox"),
+            "the contents must not be readable on the drive"
+        );
+    }
+
+    /// And the name on the drive must not give the contents away either. Anyone
+    /// holding the drive could otherwise test whether a file they already have
+    /// is in the backup, just by hashing it.
+    #[test]
+    fn the_name_on_the_drive_does_not_reveal_the_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, _) = sealed_store_in(tmp.path(), "a password");
+
+        let data = vec![3u8; 5_000];
+        let put = store.put(&data).unwrap();
+        assert_ne!(
+            put.hash,
+            ChunkHash::of(&data),
+            "an encrypted chunk must not be named by the plain digest of its contents"
+        );
+    }
+
+    /// A different password must not open somebody else's chunk.
+    #[test]
+    fn another_password_does_not_open_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, _) = sealed_store_in(tmp.path(), "the right password");
+        let data = vec![9u8; 4_096];
+        let put = store.put(&data).unwrap();
+
+        let (other, _) = sealed_store_in(tmp.path(), "a different password");
+        assert!(
+            other.get(put.hash, data.len() as u32).is_err(),
+            "the wrong password must not read the chunk"
+        );
+    }
+
+    /// A flipped bit in a sealed chunk is caught by the seal, before anything
+    /// is decompressed.
+    #[test]
+    fn a_changed_sealed_chunk_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, _) = sealed_store_in(tmp.path(), "a password");
+        let data = vec![5u8; 10_000];
+        let put = store.put(&data).unwrap();
+
+        let path = store.path_of(put.hash);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+        std::fs::write(&path, &bytes).unwrap();
+
+        let err = store.get(put.hash, data.len() as u32).unwrap_err();
+        assert_eq!(err.exit(), mjolnir_core::exit::ExitCode::CorruptBackup);
+    }
+
+    /// An unencrypted store must be completely unaffected by any of this.
+    #[test]
+    fn an_unencrypted_store_is_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_in(tmp.path());
+        assert!(!store.is_encrypted());
+
+        let data = vec![1u8; 8_192];
+        let put = store.put(&data).unwrap();
+        assert_eq!(
+            put.hash,
+            ChunkHash::of(&data),
+            "an unencrypted chunk is still named by the digest of its contents"
+        );
+        assert_eq!(store.get(put.hash, data.len() as u32).unwrap(), data);
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
     }
 
     #[test]

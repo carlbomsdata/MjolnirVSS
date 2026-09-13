@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 mjolnir-core = { workspace = true }
+mjolnir-crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
