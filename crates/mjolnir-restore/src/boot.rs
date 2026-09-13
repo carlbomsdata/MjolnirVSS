@@ -315,9 +315,13 @@ pub fn check_not_the_running_system(windows_root: &Path) -> Result<()> {
             ExitCode::UnsafeTarget,
             "refusing to change the boot configuration of the running system",
             format!(
-                "the restored volume was given {target}, which is the drive this program is running from"
+                "the disk holds {target}, which is the drive this program is running from"
             ),
-            "this is an internal error; please report it with the command you ran",
+            // This used to say it was an internal error, which was true while
+            // the check could only be reached from inside a restore. It is
+            // reachable by asking to repair the disk you booted from, which is
+            // an ordinary mistake with an ordinary answer.
+            "start the computer from MjolnirVSS recovery media and repair the disk from there; a running Windows cannot rewrite its own boot configuration safely",
         ));
     }
     Ok(())
@@ -528,6 +532,19 @@ mod tests {
 
         // A trailing separator is the same drive and must be caught too.
         assert!(check_not_the_running_system(Path::new(&format!("{system_drive}\\"))).is_err());
+
+        // Asking to repair the disk you booted from is an ordinary mistake, so
+        // the answer has to be an ordinary instruction rather than a request to
+        // file a bug report.
+        let advice = err.next_step().to_ascii_lowercase();
+        assert!(
+            advice.contains("recovery media"),
+            "the advice should say how to do it properly: {advice}"
+        );
+        assert!(
+            !advice.contains("internal error") && !advice.contains("report it"),
+            "this is not a defect in MjolnirVSS: {advice}"
+        );
     }
 
     #[test]
