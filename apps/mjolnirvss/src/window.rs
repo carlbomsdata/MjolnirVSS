@@ -33,7 +33,7 @@ use mjolnir_win32_ui::{message_box, shell};
 /// Width of the window at 96 dpi.
 const WINDOW_WIDTH: i32 = 560;
 /// Height of the window at 96 dpi.
-const WINDOW_HEIGHT: i32 = 460;
+const WINDOW_HEIGHT: i32 = 510;
 /// Margin around the content at 96 dpi.
 const MARGIN: i32 = 18;
 /// Height of an ordinary button at 96 dpi.
@@ -49,6 +49,86 @@ const ID_RESTORE_FILES: i32 = 1002;
 const ID_RECOVERY_MEDIA: i32 = 1003;
 const ID_SETTINGS: i32 = 1004;
 const ID_EXIT: i32 = 1005;
+const ID_INTRO: i32 = 1006;
+const ID_BACKUP_NOTE: i32 = 1007;
+const ID_RESTORE_FILES_NOTE: i32 = 1008;
+const ID_RECOVERY_MEDIA_NOTE: i32 = 1009;
+const ID_SETTINGS_NOTE: i32 = 1010;
+const ID_FOOTER: i32 = 1011;
+
+/// What the program is, before anybody presses anything.
+///
+/// A window of five unlabelled verbs tells somebody who already knows what it
+/// does. This is for everybody else, and it is the first thing read.
+const INTRO_TEXT: &str =
+    "Copies this computer's Windows disk while Windows is running, so the whole thing can be put back onto a new disk after the old one fails.";
+
+const BACKUP_NOTE: &str =
+    "A complete copy of the Windows disk. You can carry on using the computer while it runs.";
+
+const RESTORE_FILES_NOTE: &str =
+    "Look inside a backup and copy files out of it. Nothing is erased.";
+
+const RECOVERY_MEDIA_NOTE: &str =
+    "Make the bootable disc you will need if this computer will not start. Do it before you need it.";
+
+const SETTINGS_NOTE: &str = "Nothing to configure yet.";
+
+/// The line along the bottom.
+///
+/// The version is there because the first question about a backup taken a year
+/// ago is which version took it, and the rest is the promise the product is
+/// built around.
+/// Where each thing on the main menu goes: `(top, height)`, in order.
+///
+/// Pure, and separate from the window, because the thing that was wrong with
+/// this screen could be measured: five buttons used the top half and the rest
+/// was grey. A layout that can be checked is a layout that can be checked for
+/// that.
+///
+/// The order is fixed: intro, then each action with its line under it, then the
+/// footer, which is pinned to the bottom rather than left to follow the
+/// buttons, so the window has a floor.
+fn menu_rows(height: i32, s: &dyn Fn(i32) -> i32) -> [(i32, i32); 11] {
+    let line = s(LINE);
+    let gap = s(14);
+    let mut rows = [(0, 0); 11];
+    let mut y = s(MARGIN);
+
+    let put = |index: usize, rows: &mut [(i32, i32); 11], y: &mut i32, h: i32, after: i32| {
+        rows[index] = (*y, h);
+        *y += h + after;
+    };
+
+    // What this is, before any of the verbs.
+    put(0, &mut rows, &mut y, line * 2, s(16));
+    // The primary action is taller and alone, so there is never a question
+    // about what to press. Each action carries its line four pixels under it.
+    put(1, &mut rows, &mut y, s(PRIMARY_HEIGHT), s(4));
+    put(2, &mut rows, &mut y, line, gap);
+    for pair in [(3, 4), (5, 6), (7, 8)] {
+        put(pair.0, &mut rows, &mut y, s(BUTTON_HEIGHT), s(4));
+        put(pair.1, &mut rows, &mut y, line, gap);
+    }
+    // Exit explains itself.
+    put(9, &mut rows, &mut y, s(BUTTON_HEIGHT), gap);
+
+    // Pinned to the bottom so the window has a floor. `height` is the client
+    // area, which is shorter than the window: nothing here adjusts for the
+    // title bar, so a footer pinned against a window sized rectangle landed on
+    // top of the Exit button. Taking whichever is lower means it can never do
+    // that again, whatever the window is sized to.
+    let pinned = height - s(MARGIN) - line;
+    rows[10] = (pinned.max(y), line);
+    rows
+}
+
+fn footer_text() -> String {
+    format!(
+        "MjolnirVSS {} - nothing is installed. Deleting this folder removes every trace.",
+        mjolnir_core::TOOL_VERSION
+    )
+}
 
 const ID_SUMMARY: i32 = 1100;
 const ID_DEST_LABEL: i32 = 1101;
@@ -110,6 +190,16 @@ struct Controls {
     settings: HWND,
     exit: HWND,
 
+    // The menu's words. Five buttons on their own say what they do only to
+    // somebody who already knows; a line under each says it to everybody else,
+    // and costs nothing to ignore.
+    intro: HWND,
+    backup_note: HWND,
+    restore_files_note: HWND,
+    recovery_media_note: HWND,
+    settings_note: HWND,
+    footer: HWND,
+
     summary: HWND,
     dest_label: HWND,
     dest_edit: HWND,
@@ -142,7 +232,7 @@ struct Controls {
 }
 
 impl Controls {
-    fn all(&self) -> [HWND; 31] {
+    fn all(&self) -> [HWND; 37] {
         [
             self.backup,
             self.restore_files,
@@ -175,18 +265,46 @@ impl Controls {
             self.browse_up,
             self.browse_extract,
             self.browse_back,
+            self.intro,
+            self.backup_note,
+            self.restore_files_note,
+            self.recovery_media_note,
+            self.settings_note,
+            self.footer,
+        ]
+    }
+
+    /// The things the main menu can actually do.
+    ///
+    /// Five, and the product says five. The text around them is not an action
+    /// and must never become one; [`Self::for_screen`] shows both, so this is
+    /// what the promise is checked against.
+    fn menu_actions(&self) -> [HWND; 5] {
+        [
+            self.backup,
+            self.restore_files,
+            self.recovery_media,
+            self.settings,
+            self.exit,
         ]
     }
 
     fn for_screen(&self, screen: Screen) -> Vec<HWND> {
         match screen {
-            Screen::Menu => vec![
-                self.backup,
-                self.restore_files,
-                self.recovery_media,
-                self.settings,
-                self.exit,
-            ],
+            Screen::Menu => {
+                // Built from the five actions rather than listing them again,
+                // so the menu and the promise about it cannot drift apart.
+                let mut menu = self.menu_actions().to_vec();
+                menu.extend([
+                    self.intro,
+                    self.backup_note,
+                    self.restore_files_note,
+                    self.recovery_media_note,
+                    self.settings_note,
+                    self.footer,
+                ]);
+                menu
+            }
             Screen::Destination => vec![
                 self.summary,
                 self.dest_label,
@@ -417,6 +535,26 @@ impl BackupWindow {
         c.settings = sys::create_control(h, ControlKind::Button, "Settings", ID_SETTINGS, f);
         c.exit = sys::create_control(h, ControlKind::Button, "Exit", ID_EXIT, f);
 
+        c.intro = sys::create_control(h, ControlKind::Label, INTRO_TEXT, ID_INTRO, f);
+        c.backup_note = sys::create_control(h, ControlKind::Label, BACKUP_NOTE, ID_BACKUP_NOTE, f);
+        c.restore_files_note = sys::create_control(
+            h,
+            ControlKind::Label,
+            RESTORE_FILES_NOTE,
+            ID_RESTORE_FILES_NOTE,
+            f,
+        );
+        c.recovery_media_note = sys::create_control(
+            h,
+            ControlKind::Label,
+            RECOVERY_MEDIA_NOTE,
+            ID_RECOVERY_MEDIA_NOTE,
+            f,
+        );
+        c.settings_note =
+            sys::create_control(h, ControlKind::Label, SETTINGS_NOTE, ID_SETTINGS_NOTE, f);
+        c.footer = sys::create_control(h, ControlKind::Label, &footer_text(), ID_FOOTER, f);
+
         c.summary = sys::create_control(h, ControlKind::TextArea, "", ID_SUMMARY, f);
         c.dest_label = sys::create_control(
             h,
@@ -506,19 +644,30 @@ impl BackupWindow {
 
         match self.screen {
             Screen::Menu => {
-                let mut y = s(MARGIN);
-                // The primary action is taller and sits alone at the top, so
-                // there is never a question about what to press.
-                sys::place(c.backup, sys::rect(x, y, inner, s(PRIMARY_HEIGHT)));
-                y += s(PRIMARY_HEIGHT) + s(MARGIN);
-                for hwnd in [c.restore_files, c.recovery_media, c.settings, c.exit] {
-                    sys::place(hwnd, sys::rect(x, y, inner, s(BUTTON_HEIGHT)));
-                    y += s(BUTTON_HEIGHT) + s(8);
+                let rows = menu_rows(client.bottom - client.top, &s);
+                for (row, hwnd) in rows.iter().zip([
+                    c.intro,
+                    c.backup,
+                    c.backup_note,
+                    c.restore_files,
+                    c.restore_files_note,
+                    c.recovery_media,
+                    c.recovery_media_note,
+                    c.settings,
+                    c.settings_note,
+                    c.exit,
+                    c.footer,
+                ]) {
+                    sys::place(hwnd, sys::rect(x, row.0, inner, row.1));
                 }
             }
             Screen::Destination => {
                 let mut y = s(MARGIN);
-                let summary_height = s(LINE) * 7;
+                // Tall enough to show a four partition disk without scrolling,
+                // which is what a normal Windows machine has. The box used to
+                // be seven lines and hid the last two behind a scroll bar, on
+                // the one screen whose whole job is to say what will be copied.
+                let summary_height = s(LINE) * 10;
                 sys::place(c.summary, sys::rect(x, y, inner, summary_height));
                 y += summary_height + s(MARGIN);
 
@@ -1595,15 +1744,146 @@ mod tests {
         assert_eq!(before, sorted.len(), "two controls share an identifier");
     }
 
+    /// The product promises five things on the main window. Words were added
+    /// around them; the count of things that can be *done* must not move.
     #[test]
     fn the_main_menu_has_exactly_the_five_documented_items() {
         let controls = Controls::default();
-        assert_eq!(controls.for_screen(Screen::Menu).len(), 5);
+        assert_eq!(controls.menu_actions().len(), 5);
+    }
+
+    /// Every control the menu screen shows has to be one of the five actions or
+    /// one of the six pieces of text, so a stray control cannot appear there.
+    #[test]
+    fn the_menu_screen_shows_only_its_actions_and_its_words() {
+        let controls = Controls::default();
+        assert_eq!(controls.for_screen(Screen::Menu).len(), 5 + 6);
+    }
+
+    /// The text has to say something. An empty label is a gap in the window
+    /// that looks like a bug.
+    #[test]
+    fn the_menu_text_is_not_empty() {
+        for text in [
+            INTRO_TEXT,
+            BACKUP_NOTE,
+            RESTORE_FILES_NOTE,
+            RECOVERY_MEDIA_NOTE,
+            SETTINGS_NOTE,
+        ] {
+            assert!(text.len() > 10, "{text:?}");
+            assert!(!text.contains("  "), "double space in {text:?}");
+        }
+        let footer = footer_text();
+        assert!(
+            footer.contains(mjolnir_core::TOOL_VERSION),
+            "the footer should name the version: {footer}"
+        );
     }
 
     #[test]
     fn the_default_backup_name_is_usable_as_a_folder() {
         let name = default_name();
         assert!(BackupName::new(name.as_str()).is_ok(), "{name}");
+    }
+    /// The client area is shorter than the window, because nothing adjusts for
+    /// the title bar and border. Laying out against the window height is what
+    /// put the footer on top of the Exit button, so the tests measure against
+    /// something smaller than `WINDOW_HEIGHT`, as the real screen does.
+    const CHROME: i32 = 40;
+
+    /// The complaint this screen was reworked for: five buttons occupied the
+    /// top 230 pixels of a 460 pixel window and the rest was empty grey.
+    #[test]
+    fn the_menu_fills_its_window() {
+        let height = WINDOW_HEIGHT - CHROME;
+        let rows = menu_rows(height, &|v| v);
+        let last_before_footer = rows[9].0 + rows[9].1;
+        let footer_top = rows[10].0;
+
+        assert!(
+            last_before_footer > height / 2,
+            "the menu still stops in the top half: {last_before_footer} of {height}"
+        );
+        assert!(
+            footer_top > last_before_footer,
+            "the footer must sit below the buttons, not on top of them"
+        );
+        assert!(
+            rows[10].0 + rows[10].1 <= height - MARGIN + 1,
+            "the footer runs off the bottom"
+        );
+    }
+
+    /// Nothing on the menu may sit on top of anything else, at any scale, and
+    /// in a client area shorter than the window it was sized from.
+    #[test]
+    fn nothing_on_the_menu_overlaps() {
+        for factor in [1, 2, 3] {
+            let height = (WINDOW_HEIGHT - CHROME) * factor;
+            let rows = menu_rows(height, &|v| v * factor);
+            for pair in rows.windows(2) {
+                let (top, size) = pair[0];
+                let (next_top, _) = pair[1];
+                assert!(size > 0, "a row with no height at scale {factor}");
+                assert!(
+                    top + size <= next_top,
+                    "rows overlap at scale {factor}: {top}+{size} runs into {next_top}"
+                );
+            }
+        }
+    }
+
+    /// Every action keeps its line directly under it, which is what makes the
+    /// line read as belonging to the button rather than to the next one.
+    #[test]
+    fn each_note_sits_under_its_own_button() {
+        let rows = menu_rows(WINDOW_HEIGHT - CHROME, &|v| v);
+        for (button, note) in [(1, 2), (3, 4), (5, 6), (7, 8)] {
+            let below = rows[note].0 - (rows[button].0 + rows[button].1);
+            assert!(
+                (0..=6).contains(&below),
+                "note {note} sits {below} pixels under button {button}"
+            );
+        }
+    }
+
+    /// A window far shorter than the content still may not stack the footer on
+    /// a button. It may run out of room; it may not lie about where things are.
+    #[test]
+    fn a_short_window_never_stacks_the_footer_on_a_button() {
+        for height in [120, 200, 300, WINDOW_HEIGHT - CHROME, 900] {
+            let rows = menu_rows(height, &|v| v);
+            let exit = rows[9];
+            assert!(
+                rows[10].0 >= exit.0 + exit.1,
+                "at {height} the footer at {} lands on Exit at {}..{}",
+                rows[10].0,
+                exit.0,
+                exit.0 + exit.1
+            );
+        }
+    }
+
+    /// Each line under a button has to fit on one line.
+    ///
+    /// A character budget rather than a measured width, which is a proxy: the
+    /// real check is the screenshot. It exists because one of these notes
+    /// shipped a sentence that ran off the right edge and was cut mid word, and
+    /// a budget catches the next one before a virtual machine has to.
+    #[test]
+    fn every_note_fits_on_one_line() {
+        for note in [
+            BACKUP_NOTE,
+            RESTORE_FILES_NOTE,
+            RECOVERY_MEDIA_NOTE,
+            SETTINGS_NOTE,
+        ] {
+            assert!(
+                note.len() <= 95,
+                "{} characters will not fit on one line: {note:?}",
+                note.len()
+            );
+        }
     }
 }
