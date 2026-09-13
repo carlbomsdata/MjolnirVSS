@@ -30,8 +30,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, CreateWindowExW, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
     SystemParametersInfoW, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, DLGC_STATIC, ES_AUTOHSCROLL, ES_LEFT,
     ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDLGCODE, WM_SETFONT,
-    WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDLGCODE, WM_SETFOCUS,
+    WM_SETFONT, WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE,
+    WS_VSCROLL,
 };
 
 /// Reference device independent pixels per inch.
@@ -334,6 +335,32 @@ unsafe extern "system" fn output_only_proc(
 ) -> LRESULT {
     if msg == WM_GETDLGCODE {
         return LRESULT(DLGC_STATIC as isize);
+    }
+    // Text that is only read must never hold the keyboard. Saying it is static
+    // stops the dialog manager putting the keyboard here, but something else
+    // still can, and while it sat here Enter pressed nothing. Whatever gives it
+    // focus, it is handed straight on to the next real control.
+    if msg == WM_SETFOCUS {
+        // SAFETY: the handle names a live control with a live parent window.
+        let handed_on = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetParent(hwnd)
+                .ok()
+                .and_then(|parent| {
+                    windows::Win32::UI::WindowsAndMessaging::GetNextDlgTabItem(
+                        parent,
+                        Some(hwnd),
+                        false,
+                    )
+                    .ok()
+                })
+                .filter(|next| !next.is_invalid() && *next != hwnd)
+                .map(|next| {
+                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(next));
+                })
+        };
+        if handed_on.is_some() {
+            return LRESULT(0);
+        }
     }
     let previous = ORIGINAL_EDIT_PROC.get().copied().unwrap_or_default();
     if previous == 0 {
