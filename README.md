@@ -79,7 +79,7 @@ onto a blank replacement disk after the original has failed.
 | Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
 | BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |
 | BitLocker: locked volume | **Refused**, clearly |
-| Encrypting a backup | **Implemented**, and taken all the way round: an encrypted backup of a running Windows 11, restored from recovery media and booted. Argon2id and AES-256-GCM, nothing home made. Command line only; the window does not offer it yet. See [`docs/encryption.md`](docs/encryption.md) |
+| Encrypting a backup | **Implemented**, and taken all the way round: an encrypted backup of a running Windows 11, restored from recovery media and booted. Argon2id and AES-256-GCM, nothing home made. The recovery wizard asks for the password; the backup window does not offer encryption yet. See [`docs/encryption.md`](docs/encryption.md) |
 | Incremental backups | Not implemented, and deliberately not started until the above works |
 
 ---

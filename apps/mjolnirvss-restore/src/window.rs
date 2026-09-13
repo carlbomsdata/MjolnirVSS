@@ -103,7 +103,10 @@ impl Step {
                 &[ButtonSlot::Exit, ButtonSlot::Back, ButtonSlot::Next]
             }
             Step::Restoring => &[ButtonSlot::Exit],
-            Step::Completed => &[ButtonSlot::Exit, ButtonSlot::Next],
+            // Only one button, and the Next button is it: the finished step
+            // relabels Next to "Exit", so showing the Exit button as well put
+            // two buttons saying Exit side by side.
+            Step::Completed => &[ButtonSlot::Next],
         }
     }
 
@@ -149,6 +152,16 @@ mod focus_tests {
         );
         // Paragraphs separated by a blank line, not by a bare newline.
         assert_eq!(t.matches(&super::paragraph_break()).count(), 2, "{t}");
+    }
+
+    /// The finished step relabels Next to "Exit", so it must not also show the
+    /// Exit button: two buttons saying the same word is a question, not an
+    /// instruction.
+    #[test]
+    fn the_finished_step_shows_one_way_out() {
+        let buttons = Step::Completed.buttons();
+        assert_eq!(buttons.len(), 1, "{buttons:?}");
+        assert!(buttons.contains(&ButtonSlot::Next), "{buttons:?}");
     }
 
     /// An encrypted backup is asked about **before** a disk is chosen, so a
