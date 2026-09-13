@@ -95,6 +95,36 @@ fn a_missing_chunk_is_caught_by_verification() {
     );
 }
 
+/// The partition table a restore writes comes from `disk_layout.json`, so an
+/// edit to that document would move a partition on somebody's new disk. It is
+/// covered by the same recorded digest as the manifest.
+#[test]
+fn an_edited_disk_layout_is_caught_by_its_recorded_digest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, dir) = make_backup(&tmp, "LAYOUT_2026-01-01_1304");
+
+    // Move a partition by a megabyte, which is the kind of edit that would be
+    // invisible in the result until Windows failed to start.
+    let layout = dir.join(mjolnir_image::layout::DISK_LAYOUT_FILE);
+    let before = std::fs::read_to_string(&layout).unwrap();
+    let offset = before
+        .split("\"starting_offset\": ")
+        .nth(1)
+        .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+        .expect("the layout records a starting offset")
+        .to_owned();
+    let moved = (offset.parse::<u64>().unwrap() + 1024 * 1024).to_string();
+    corrupt::edit_document(&layout, &offset, &moved).unwrap();
+
+    let set = BackupSet::open_unchecked(&dir).unwrap();
+    assert!(
+        set.issues().iter().any(|i| i.is_error()),
+        "an edited disk layout should not pass: {:?}",
+        set.issues()
+    );
+    assert!(BackupSet::open(&dir).is_err());
+}
+
 #[test]
 fn an_edited_manifest_is_caught_by_its_recorded_digest() {
     let tmp = tempfile::tempdir().unwrap();
