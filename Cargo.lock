@@ -313,6 +313,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mjolnir-files"
+version = "0.1.0"
+dependencies = [
+ "mjolnir-core",
+ "mjolnir-image",
+ "mjolnir-ntfs",
+ "mjolnir-testkit",
+ "tempfile",
+]
+
+[[package]]
 name = "mjolnir-image"
 version = "0.1.0"
 dependencies = [
