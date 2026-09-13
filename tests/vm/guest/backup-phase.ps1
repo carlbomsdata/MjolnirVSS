@@ -90,15 +90,32 @@ try {
     $destination = Join-Path $root 'Backups'
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
-    # A run that failed leaves a folder behind with no completion marker in it.
-    # That is deliberate, so somebody can see what happened, but a test machine
-    # that repeats the phase would fill its destination with them.
+    # Every earlier run's backup is removed, finished or not.
+    #
+    # Removing only the unfinished ones was not enough: five completed backups
+    # accumulated over a day of milestone runs and filled the 64 GB destination,
+    # and the next run spent five minutes copying before Windows reported the
+    # drive full. The phase takes its own backup and needs nothing from a
+    # previous one, so the destination starts empty every time.
+    #
+    # Only folders directly inside $destination are touched, and only ones whose
+    # name is a MjolnirVSS backup name. Nothing else on the drive is looked at.
     foreach ($old in Get-ChildItem $destination -Directory -ErrorAction SilentlyContinue) {
-        if (-not (Test-Path (Join-Path $old.FullName 'completion.json'))) {
-            Report "removing an unfinished backup from an earlier run: $($old.Name)"
+        if ($old.Name -match '^[A-Za-z0-9-]+_\d{4}-\d{2}-\d{2}_\d{4}$') {
+            Report "removing a backup from an earlier run: $($old.Name)"
             Remove-Item $old.FullName -Recurse -Force
         }
     }
+    # The damaged copy this phase makes is removed on success, but not when the
+    # phase throws first, and it is as large as the backup itself.
+    $leftover = Join-Path $root 'Backups-damaged'
+    if (Test-Path $leftover) {
+        Report 'removing the damaged copy left by an earlier run'
+        Remove-Item $leftover -Recurse -Force
+    }
+
+    $free = (Get-Volume -DriveLetter $BackupLetter).SizeRemaining
+    Report ("destination has {0:N1} GB free" -f ($free / 1GB))
 
     # ---- what would be captured -----------------------------------------
     Report 'inspect:'
