@@ -14,9 +14,10 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, IFileOpenDialog, ShellExecuteW, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS,
-    SIGDN_FILESYSPATH,
+    FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, ShellExecuteW,
+    FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -122,6 +123,104 @@ fn pick_folder_inner(parent: HWND, title: &str) -> Result<Option<PathBuf>> {
         return Ok(None);
     }
     Ok(Some(PathBuf::from(text)))
+}
+
+/// Asks the operator where to save a file.
+///
+/// Returns `None` when they cancel, which is not a failure and is why this
+/// returns an option rather than a result: there is nothing to report.
+///
+/// Windows adds the extension itself if the operator does not type one, and
+/// asks about overwriting an existing file, so neither is handled here.
+pub fn save_file(
+    parent: HWND,
+    title: &str,
+    default_name: &str,
+    filter_label: &str,
+    extension: &str,
+) -> Option<PathBuf> {
+    // The shell dialog requires a single threaded apartment; see pick_folder.
+    //
+    // SAFETY: takes no pointers, and `owns_com` records whether this call is
+    // the one that has to be balanced.
+    let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let owns_com = hr.is_ok();
+
+    let result = save_file_inner(parent, title, default_name, filter_label, extension);
+
+    if owns_com {
+        // SAFETY: balances the CoInitializeEx above, on the same thread. Every
+        // interface obtained inside has been dropped, because save_file_inner
+        // returns owned values only.
+        unsafe { CoUninitialize() };
+    }
+    result
+}
+
+fn save_file_inner(
+    parent: HWND,
+    title: &str,
+    default_name: &str,
+    filter_label: &str,
+    extension: &str,
+) -> Option<PathBuf> {
+    // SAFETY: creates a documented in-process shell class. No pointer is passed
+    // in, and the interface is released when the wrapper drops.
+    let dialog: IFileSaveDialog =
+        unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER) }.ok()?;
+
+    let title_w = wide(title);
+    let name_w = wide(default_name);
+    let label_w = wide(filter_label);
+    let pattern_w = wide(&format!("*.{extension}"));
+    let extension_w = wide(extension);
+    let filters = [COMDLG_FILTERSPEC {
+        pszName: PCWSTR(label_w.as_ptr()),
+        pszSpec: PCWSTR(pattern_w.as_ptr()),
+    }];
+
+    // SAFETY: `dialog` is alive for this block. Every string and the filter
+    // array are locals that outlive the calls that read them, and the shell
+    // copies what it keeps. The option flags are documented constants.
+    unsafe {
+        let options = dialog.GetOptions().unwrap_or_default();
+        let _ = dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+        let _ = dialog.SetTitle(PCWSTR(title_w.as_ptr()));
+        let _ = dialog.SetFileName(PCWSTR(name_w.as_ptr()));
+        let _ = dialog.SetDefaultExtension(PCWSTR(extension_w.as_ptr()));
+        let _ = dialog.SetFileTypes(&filters);
+
+        let owner = if parent.is_invalid() {
+            None
+        } else {
+            Some(parent)
+        };
+        if dialog.Show(owner).is_err() {
+            // Cancel arrives as an error, and it is not one.
+            return None;
+        }
+    }
+
+    // SAFETY: Show succeeded, which is the state in which GetResult returns the
+    // chosen item; the item is released when it drops.
+    let item = unsafe { dialog.GetResult() }.ok()?;
+
+    // SAFETY: `item` came from a successful GetResult, and SIGDN_FILESYSPATH
+    // fails rather than returning something that is not a path.
+    let path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }.ok()?;
+
+    // SAFETY: the shell allocated this string with the task allocator and the
+    // caller owns it. `to_string` copies the characters out, and the original
+    // is freed immediately afterwards and not used again.
+    let text = unsafe { path.to_string() }.unwrap_or_default();
+    // SAFETY: allocated by the shell above and not yet freed.
+    unsafe { CoTaskMemFree(Some(path.0 as *const core::ffi::c_void)) };
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(text))
+    }
 }
 
 /// Opens a folder in File Explorer.

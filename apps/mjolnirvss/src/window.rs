@@ -21,6 +21,7 @@ use mjolnir_core::error::{Error, Result};
 use mjolnir_core::exit::ExitCode;
 use mjolnir_core::ids::BackupName;
 use mjolnir_core::progress::format_bytes;
+use mjolnir_media::MediaOutcome;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::HFONT;
 
@@ -192,14 +193,79 @@ impl Controls {
     }
 }
 
+/// The work the window can have running.
+///
+/// Only one at a time, ever. Two shadow copies of the same machine, or two
+/// programs writing the same folder, is the kind of thing that produces a
+/// backup nobody can explain afterwards.
+enum Job {
+    /// Backing up this computer.
+    Backup(Worker<BackupOutcome>),
+    /// Building recovery media.
+    Media(Worker<MediaOutcome>),
+}
+
+impl Job {
+    fn progress(&self) -> &std::sync::Arc<mjolnir_win32_ui::worker::SharedProgress> {
+        match self {
+            Job::Backup(w) => w.progress(),
+            Job::Media(w) => w.progress(),
+        }
+    }
+
+    fn is_cancelling(&self) -> bool {
+        match self {
+            Job::Backup(w) => w.is_cancelling(),
+            Job::Media(w) => w.is_cancelling(),
+        }
+    }
+
+    fn is_finished(&self) -> bool {
+        match self {
+            Job::Backup(w) => w.is_finished(),
+            Job::Media(w) => w.is_finished(),
+        }
+    }
+
+    fn cancel(&self) {
+        match self {
+            Job::Backup(w) => w.cancel(),
+            Job::Media(w) => w.cancel(),
+        }
+    }
+
+    /// What this job is called, for a message about it already running.
+    fn describe(&self) -> &'static str {
+        match self {
+            Job::Backup(_) => "A backup is already running.",
+            Job::Media(_) => "Recovery media is already being made.",
+        }
+    }
+
+    fn take_result(&mut self) -> Option<JobResult> {
+        match self {
+            Job::Backup(w) => w.take_result().map(JobResult::Backup),
+            Job::Media(w) => w.take_result().map(JobResult::Media),
+        }
+    }
+}
+
+/// What a finished job produced.
+enum JobResult {
+    /// A backup, or why there was not one.
+    Backup(std::result::Result<BackupOutcome, Error>),
+    /// Recovery media, or why there was none.
+    Media(std::result::Result<MediaOutcome, Error>),
+}
+
 /// The window's state.
 pub struct BackupWindow {
     font: HFONT,
     screen: Screen,
     controls: Controls,
     plan: Option<BackupPlan>,
-    worker: Option<Worker<BackupOutcome>>,
-    finished: Option<std::result::Result<BackupOutcome, Error>>,
+    worker: Option<Job>,
+    finished: Option<JobResult>,
     show_details: bool,
 }
 
@@ -494,8 +560,8 @@ impl BackupWindow {
     fn start_backup(&mut self, window: &Window) {
         // Refusing a second job is what stops two shadow copies and two writers
         // running against the same destination.
-        if self.worker.is_some() {
-            message_box::warn(window.raw(), "MjolnirVSS", "A backup is already running.");
+        if let Some(running) = &self.worker {
+            message_box::warn(window.raw(), "MjolnirVSS", running.describe());
             return;
         }
 
@@ -568,9 +634,9 @@ impl BackupWindow {
         sys::enable(self.controls.cancel, true);
         sys::set_text(self.controls.cancel, "Cancel");
 
-        self.worker = Some(Worker::start(move |progress, cancel| {
+        self.worker = Some(Job::Backup(Worker::start(move |progress, cancel| {
             mjolnir_backup::run(&request, &plan, progress, cancel)
-        }));
+        })));
 
         window.set_timer(TIMER_PROGRESS, TIMER_INTERVAL);
         self.show_screen(window, Screen::Progress);
@@ -633,11 +699,22 @@ impl BackupWindow {
     }
 
     fn show_result(&mut self, window: &Window) {
-        let Some(result) = &self.finished else {
+        // Taken rather than borrowed, because painting the result needs the
+        // window and the window is reached through the same `self`. Both arms
+        // put it back before they return.
+        let Some(result) = self.finished.take() else {
             return;
         };
 
-        match result {
+        let result = match result {
+            JobResult::Backup(r) => r,
+            JobResult::Media(r) => {
+                self.show_media_result(window, r);
+                return;
+            }
+        };
+
+        match &result {
             Ok(outcome) => {
                 sys::set_text(self.controls.result_title, "Backup completed and verified");
                 let mut body = format!(
@@ -671,6 +748,174 @@ impl BackupWindow {
                 sys::enable(self.controls.open_folder, false);
             }
         }
+        self.finished = Some(JobResult::Backup(result));
+        self.show_screen(window, Screen::Result);
+    }
+
+    /// Makes recovery media: the disc or drive this computer is started from
+    /// when it will not start by itself.
+    ///
+    /// Three questions and then it runs: what kind, where, and are you sure.
+    fn make_recovery_media(&mut self, window: &Window) {
+        if let Some(running) = &self.worker {
+            message_box::warn(window.raw(), "MjolnirVSS", running.describe());
+            return;
+        }
+
+        // What MjolnirVSS can build depends on what Windows components this
+        // computer has, so that is settled before anything is asked.
+        let source = match mjolnir_media::best_source() {
+            Ok(source) => source,
+            Err(e) => {
+                message_box::error_for(window.raw(), "MjolnirVSS", &e);
+                return;
+            }
+        };
+
+        let wants_iso = message_box::choose(
+            window.raw(),
+            "Recovery media",
+            "What kind of recovery media?",
+            "A file can be attached to a virtual machine or written to a disc later. A USB drive can be used straight away.",
+            &format!(
+                "MjolnirVSS builds recovery media from the Windows parts already on this computer, using {}. Nothing is downloaded, and no Microsoft file is copied anywhere except onto the media.",
+                source.kind.describe()
+            ),
+            "Save a file (.iso)",
+            "USB drive",
+        );
+
+        let Some(wants_iso) = wants_iso else { return };
+        if !wants_iso {
+            // Writing a USB drive erases it, and this version has not been
+            // tested doing that. Saying so is better than doing it badly.
+            message_box::info(
+                window.raw(),
+                "MjolnirVSS",
+                "Writing a USB drive is not built yet.\n\nSave an ISO file instead, then write it to a USB drive with Microsoft's own MakeWinPEMedia, or with any tool that writes a bootable image. Writing a USB drive erases everything on it, which is why MjolnirVSS will not do it until it has been tested properly.",
+            );
+            return;
+        }
+
+        let Some(path) = shell::save_file(
+            window.raw(),
+            "Save the recovery image",
+            "MjolnirVSS-Recovery.iso",
+            "Disc image (*.iso)",
+            "iso",
+        ) else {
+            return;
+        };
+
+        let going_ahead = message_box::confirm_with_details(
+            window.raw(),
+            "Recovery media",
+            "Make recovery media?",
+            &format!(
+                "MjolnirVSS will write {}. It takes a few minutes and about 400 MB of space.",
+                path.display()
+            ),
+            &format!(
+                "Source: {}\r\nImage: {}\r\n\r\nThe Windows files on the result belong to Microsoft and are licensed to this computer. Keep the media, do not pass it on.\r\n\r\nNothing on this computer is changed, and no disk is erased.",
+                source.kind.describe(),
+                source.boot_image.display()
+            ),
+            "Make it",
+        );
+        if !going_ahead {
+            return;
+        }
+
+        let release = match std::env::current_exe() {
+            Ok(exe) => exe.parent().map(std::path::Path::to_path_buf),
+            Err(_) => None,
+        };
+        let Some(release) = release else {
+            message_box::warn(
+                window.raw(),
+                "MjolnirVSS",
+                "MjolnirVSS could not find its own folder, so it does not know where the recovery program is.",
+            );
+            return;
+        };
+
+        let payload = match mjolnir_media::payload_from_release(&release) {
+            Ok(payload) => payload,
+            Err(e) => {
+                message_box::error_for(window.raw(), "MjolnirVSS", &e);
+                return;
+            }
+        };
+
+        self.finished = None;
+        sys::set_text(self.controls.stage, "Starting...");
+        sys::set_text(self.controls.stats, "");
+        sys::set_text(self.controls.details, "");
+        sys::set_progress(self.controls.progress, 0);
+        sys::set_progress_state(self.controls.progress, ProgressState::Normal);
+        sys::enable(self.controls.cancel, true);
+        sys::set_text(self.controls.cancel, "Cancel");
+
+        let work = std::env::temp_dir();
+        self.worker = Some(Job::Media(Worker::start(move |progress, cancel| {
+            let outcome =
+                mjolnir_media::build_iso(&source, &payload, &path, &work, progress, cancel)?;
+            let report = mjolnir_media::check_iso(&outcome.path)?;
+            if !report.passed() {
+                return Err(Error::new(
+                    ExitCode::CorruptBackup,
+                    "the recovery media was made but did not check out",
+                    report
+                        .failures()
+                        .iter()
+                        .map(|c| format!("{}: {}", c.what, c.detail))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    "try making it again; if it fails the same way, there may not be room on the drive",
+                ));
+            }
+            Ok(outcome)
+        })));
+
+        self.show_screen(window, Screen::Progress);
+        window.set_timer(TIMER_PROGRESS, TIMER_INTERVAL);
+    }
+
+    /// The result screen for a finished recovery media job.
+    fn show_media_result(
+        &mut self,
+        window: &Window,
+        result: std::result::Result<MediaOutcome, Error>,
+    ) {
+        match &result {
+            Ok(outcome) => {
+                sys::set_text(self.controls.result_title, "Recovery media is ready");
+                let mut body = format!(
+                    "Saved:\r\n{}\r\n\r\nSize: {}\r\n\r\nChecked: it is a disc image, it is marked bootable, and it is the size it should be.",
+                    outcome.path.display(),
+                    format_bytes(outcome.size_bytes)
+                );
+                for note in &outcome.notes {
+                    body.push_str(&format!("\r\n\r\n{note}"));
+                }
+                body.push_str(
+                    "\r\n\r\nStart the broken computer from this media, then follow the recovery program. Try it once before you need it.",
+                );
+                sys::set_text(self.controls.result_body, &body);
+                sys::enable(self.controls.open_folder, true);
+            }
+            Err(e) => {
+                let title = if e.exit() == ExitCode::Cancelled {
+                    "Recovery media cancelled"
+                } else {
+                    "Recovery media could not be made"
+                };
+                sys::set_text(self.controls.result_title, title);
+                sys::set_text(self.controls.result_body, &message_box::format_error(e));
+                sys::enable(self.controls.open_folder, false);
+            }
+        }
+        self.finished = Some(JobResult::Media(result));
         self.show_screen(window, Screen::Result);
     }
 
@@ -729,18 +974,12 @@ impl WindowHandler for BackupWindow {
     fn on_command(&mut self, window: &Window, id: i32, notification: u32) {
         match (id, notification) {
             (ID_BACKUP, _) => self.begin_backup_setup(window),
-            (ID_RESTORE_FILES, _) | (ID_RECOVERY_MEDIA, _) | (ID_MAKE_MEDIA, _) => {
-                let what = if id == ID_RESTORE_FILES {
-                    "Restoring individual files from a backup"
-                } else {
-                    "Creating recovery media"
-                };
+            (ID_RECOVERY_MEDIA, _) | (ID_MAKE_MEDIA, _) => self.make_recovery_media(window),
+            (ID_RESTORE_FILES, _) => {
                 message_box::info(
                     window.raw(),
                     "MjolnirVSS",
-                    &format!(
-                        "{what} is not built yet.\n\nThis version takes a verified backup of the system disk. Recovery is done with MjolnirVSS.Restore.exe from Windows installation media; see docs/bare-metal-restore.md."
-                    ),
+                    "Restoring individual files from a backup is not built yet.\n\nTo get a whole computer back, start it from recovery media and use MjolnirVSS.Restore.exe.",
                 );
             }
             (ID_SETTINGS, _) => message_box::info(
@@ -755,11 +994,17 @@ impl WindowHandler for BackupWindow {
             (ID_START, _) => self.start_backup(window),
             (ID_CANCEL, _) => self.request_cancel(),
             (ID_DETAILS_TOGGLE, _) => self.toggle_details(window),
-            (ID_OPEN_FOLDER, _) => {
-                if let Some(Ok(outcome)) = &self.finished {
+            (ID_OPEN_FOLDER, _) => match &self.finished {
+                Some(JobResult::Backup(Ok(outcome))) => {
                     shell::open_in_explorer(&outcome.backup_dir);
                 }
-            }
+                Some(JobResult::Media(Ok(outcome))) => {
+                    if let Some(folder) = outcome.path.parent() {
+                        shell::open_in_explorer(folder);
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }

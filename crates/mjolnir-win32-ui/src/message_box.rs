@@ -10,7 +10,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Controls::{
     TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON,
-    TDF_EXPAND_FOOTER_AREA, TDF_POSITION_RELATIVE_TO_WINDOW, TD_WARNING_ICON,
+    TDF_EXPAND_FOOTER_AREA, TDF_POSITION_RELATIVE_TO_WINDOW, TDF_USE_COMMAND_LINKS,
+    TD_WARNING_ICON,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_ICONERROR, MB_ICONQUESTION, MB_ICONWARNING, MB_OK, MB_YESNO,
@@ -131,6 +132,86 @@ pub fn confirm_with_details(
 {details}"
                 ),
             )
+        }
+    }
+}
+
+/// Offers two named choices, with the explanation folded away.
+///
+/// Returns `Some(true)` for the first, `Some(false)` for the second, and `None`
+/// when the operator cancels. Two plainly named buttons beat a yes and a no
+/// that the reader has to map back onto the question.
+pub fn choose(
+    parent: HWND,
+    title: &str,
+    instruction: &str,
+    content: &str,
+    details: &str,
+    first: &str,
+    second: &str,
+) -> Option<bool> {
+    const FIRST_ID: i32 = 1001;
+    const SECOND_ID: i32 = 1002;
+
+    let title_w = wide(title);
+    let instruction_w = wide(instruction);
+    let content_w = wide(content);
+    let details_w = wide(details);
+    let first_w = wide(first);
+    let second_w = wide(second);
+    let expand_w = wide("Hide details");
+    let collapse_w = wide("Show details");
+
+    let buttons = [
+        TASKDIALOG_BUTTON {
+            nButtonID: FIRST_ID,
+            pszButtonText: PCWSTR(first_w.as_ptr()),
+        },
+        TASKDIALOG_BUTTON {
+            nButtonID: SECOND_ID,
+            pszButtonText: PCWSTR(second_w.as_ptr()),
+        },
+    ];
+
+    let config = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+        hwndParent: parent,
+        dwFlags: TDF_USE_COMMAND_LINKS | TDF_EXPAND_FOOTER_AREA | TDF_POSITION_RELATIVE_TO_WINDOW,
+        dwCommonButtons: TDCBF_CANCEL_BUTTON,
+        pszWindowTitle: PCWSTR(title_w.as_ptr()),
+        pszMainInstruction: PCWSTR(instruction_w.as_ptr()),
+        pszContent: PCWSTR(content_w.as_ptr()),
+        cButtons: buttons.len() as u32,
+        pButtons: buttons.as_ptr(),
+        nDefaultButton: FIRST_ID,
+        pszExpandedInformation: PCWSTR(details_w.as_ptr()),
+        pszExpandedControlText: PCWSTR(expand_w.as_ptr()),
+        pszCollapsedControlText: PCWSTR(collapse_w.as_ptr()),
+        ..Default::default()
+    };
+
+    let mut pressed = 0i32;
+    // SAFETY: every string and the button array are locals that outlive the
+    // call, and `config` points only at them. `pressed` is a live local the
+    // call writes into. The dialog is modal, so nothing is freed while it is
+    // on screen.
+    let shown = unsafe { TaskDialogIndirect(&config, Some(&mut pressed), None, None) };
+
+    match shown {
+        Ok(()) => match pressed {
+            FIRST_ID => Some(true),
+            SECOND_ID => Some(false),
+            _ => None,
+        },
+        Err(_) => {
+            // Without the task dialog, the question still has to be asked.
+            let text =
+                format!("{instruction}\n\n{content}\n\n{details}\n\nYes: {first}\nNo: {second}");
+            if confirm(parent, title, &text) {
+                Some(true)
+            } else {
+                Some(false)
+            }
         }
     }
 }
