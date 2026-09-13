@@ -31,11 +31,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
     GetWindowTextLengthW, GetWindowTextW, IsDialogMessageW, KillTimer, LoadCursorW, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetTimer, SetWindowPos, ShowWindow, TranslateMessage,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
-    WM_ACTIVATE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED,
-    WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_EX_CONTROLPARENT, WS_MINIMIZEBOX,
-    WS_OVERLAPPED, WS_SYSMENU,
+    PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SWP_NOACTIVATE,
+    SWP_NOZORDER, SW_SHOW, WM_ACTIVATE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC,
+    WM_DESTROY, WM_DPICHANGED, WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CAPTION,
+    WS_EX_CONTROLPARENT, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
 
 use crate::sys;
@@ -413,6 +413,18 @@ where
     let window = Window::from_raw(hwnd);
     window.show();
     window.update();
+
+    // Ask for the keyboard. In Windows PE the recovery application is started
+    // from a command prompt that keeps focus, so without this the window is on
+    // screen but nothing typed reaches it, and somebody with no mouse cannot
+    // operate it at all. There is no desktop to be rude to: this window is what
+    // the machine was started for.
+    //
+    // SAFETY: the handle names a live window. Being refused is not an error;
+    // the window is simply left as it was.
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
 
     // SAFETY: the handle names a live window and the message carries no
     // pointers. It is handled once, from the loop below.
