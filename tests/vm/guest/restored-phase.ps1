@@ -67,7 +67,7 @@ try {
     # ---- 2. the files ------------------------------------------------------
     $markersPath = Join-Path $TestRoot 'markers.json'
     if (-not (Test-Path -LiteralPath $markersPath)) {
-        Problem "no markers.json at $markersPath: the test files did not survive"
+        Problem "no markers.json at ${markersPath}: the test files did not survive"
     } else {
         $markers = Get-Content $markersPath -Raw | ConvertFrom-Json
         $matched = 0; $wrong = 0; $missing = 0; $unusable = 0
