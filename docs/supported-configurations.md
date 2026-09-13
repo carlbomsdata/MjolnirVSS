@@ -14,7 +14,7 @@ below is a real check with a test behind it, and every one explains itself.
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |
-| Windows volume | NTFS, encrypted or not (BitLocker must be unlocked) |
+| Windows volume | NTFS, encrypted or not (BitLocker must be unlocked). An encrypted machine has been backed up, restored and started; the restored disk comes back **unencrypted**, which is explained in [`bitlocker.md`](bitlocker.md) |
 | EFI system partition | FAT32 |
 | Recovery partition | NTFS |
 | Sector sizes | 512 native and 512e (512 logical / 4096 physical); 4Kn is implemented and unit tested but has not been exercised on real hardware |
