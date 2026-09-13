@@ -125,9 +125,10 @@ A **locked** volume is refused, because nothing can read it.
 
 Two things follow, and MjolnirVSS says both rather than leaving them implied:
 
-- **The backup contains readable copies of your files.** It is not encrypted, by
-  BitLocker or by MjolnirVSS. Look after the backup drive as carefully as the
-  computer.
+- **The backup contains readable copies of your files.** BitLocker does not
+  protect them once they are out of the volume. Unless you pass `--encrypt`,
+  nothing else does either, so look after the backup drive as carefully as the
+  computer. See [`docs/encryption.md`](docs/encryption.md).
 - **A restored disk comes back unencrypted.** BitLocker protection does not carry
   over, and this has been checked rather than assumed: a fully encrypted machine
   was backed up, restored and started, and the restored volume reported itself
@@ -141,11 +142,23 @@ BitLocker's state.
 
 ## Taking a backup
 
+![The MjolnirVSS main window: Back up this PC, Restore files, Recovery media, Settings, Exit](docs/images/main-window.png)
+
+Five things. That is the whole window, and it is deliberate: the day you need a
+backup program is not the day to start reading its manual.
+
 1. Plug in the external drive.
 2. Run `MjolnirVSS.exe`. Windows asks for permission; say yes.
 3. Press **Back up this PC**.
 4. Check what it found, choose the folder to save into, and press **Start backup**.
 5. Wait. The backup verifies itself at the end.
+
+![The backup screen, listing the disk and its four partitions, with a folder to save into and a name](docs/images/backup-screen.png)
+
+It shows you what it found before it does anything: the disk, every partition on
+it, and how much there is to read. **Start backup** stays greyed out until you
+have chosen somewhere to put it, and it will not let that somewhere be the disk
+being copied.
 
 The backup lands in a folder named after the computer and the time, for example
 `DESKTOP-1A2B_2026-09-12_1015`.
@@ -158,6 +171,7 @@ backups.
 ```powershell
 MjolnirVSS.exe inspect
 MjolnirVSS.exe backup --destination E:\Backups
+MjolnirVSS.exe backup --destination E:\Backups --encrypt
 MjolnirVSS.exe verify E:\Backups\DESKTOP-1A2B_2026-09-12_1015
 MjolnirVSS.exe list E:\Backups
 MjolnirVSS.exe cleanup-snapshots
@@ -170,6 +184,25 @@ never be restored.
 
 MjolnirVSS never registers a scheduled task. If you want backups on a schedule,
 create the task yourself and point it at the `backup` command above.
+
+### Made to be driven by something that is not a person
+
+Every command takes `--json` and prints one document on standard output -
+**failures included**, with the exit code inside it. Progress goes to standard
+error and never pollutes the JSON. Nothing stops to ask a question: an encrypted
+backup takes `--password-file`, a restore takes `--confirm`, and a command that
+would otherwise have to ask refuses and names the flag rather than hanging.
+
+```powershell
+$out  = MjolnirVSS.exe --json list E:\Backups
+$code = $LASTEXITCODE
+if ($code -ne 0) { throw ($out | ConvertFrom-Json).error.what }
+```
+
+Exit codes are a contract: `0` worked, `6` the backup is damaged, `7` the
+destination is wrong, `9` cancelled, and so on. The full table, the failure
+document, and a whole scheduled backup are in
+[`docs/automation.md`](docs/automation.md).
 
 ---
 
@@ -188,19 +221,63 @@ sitting on.
 
 ---
 
+## Getting a single file back
+
+You do not have to restore a whole computer to get one file. Press **Restore
+files**, choose the backup, choose the drive inside it, browse, and press
+**Copy out...**
+
+Nothing is erased and nothing is mounted. The backup is opened read only.
+
+```powershell
+# which drives are inside this backup
+MjolnirVSS.exe volumes E:\Backups\DESKTOP-1A2B_2026-09-12_1015
+
+# what is in a folder
+MjolnirVSS.exe browse E:\Backups\DESKTOP-1A2B_2026-09-12_1015 `
+    --volume disk-0-part-3 --folder \Users\tobias\Documents
+
+# copy it out
+MjolnirVSS.exe extract E:\Backups\DESKTOP-1A2B_2026-09-12_1015 `
+    --volume disk-0-part-3 --item \Users\tobias\Documents --into D:\Recovered
+```
+
+Add `--json` to any of them for output a script can read. Details:
+[`docs/file-recovery.md`](docs/file-recovery.md).
+
+---
+
 ## Recovering a computer
 
-Recovery media creation is not built yet. The supported route today:
+### First, make the media, while the computer still works
 
-1. On any working computer, use Microsoft's own Media Creation Tool to make a
-   Windows installation USB.
-2. Copy `MjolnirVSS.Restore.exe` onto that USB.
-3. Boot the broken computer from it.
-4. When Windows Setup appears, press **Shift+F10** for a command prompt.
-5. Find the USB's drive letter and run `MjolnirVSS.Restore.exe`.
-6. Follow the wizard: find the backup, choose it, choose the blank replacement
-   disk, read what is about to be erased, and type the disk's serial number to
-   confirm.
+Press **Recovery media** in the main window, or:
+
+```powershell
+MjolnirVSS.exe recovery-media --iso E:\MjolnirVSS-Recovery.iso
+```
+
+MjolnirVSS builds it out of the Windows recovery parts your own computer
+already has. Nothing belonging to Microsoft is shipped or downloaded. Write the
+ISO to a USB stick with any tool that writes a bootable image. Do this **before**
+you need it: a computer that will not start cannot build its own rescue disc.
+
+Needs the Windows ADK installed. Details and the reason:
+[`docs/recovery-media.md`](docs/recovery-media.md). Without the ADK, copy
+`MjolnirVSS.Restore.exe` onto a Windows installation USB made with Microsoft's
+Media Creation Tool, boot it, and press **Shift+F10** at Windows Setup for a
+command prompt.
+
+### Then, when the disk has failed
+
+1. Boot the broken computer from that media. The recovery wizard starts on its
+   own.
+2. Follow the five steps: find the backup, choose it, choose the blank
+   replacement disk, read what is about to be erased, and type the disk's
+   serial number to confirm.
+
+It works from the keyboard alone - Tab, arrows and Enter - which matters in
+Windows PE on a machine whose mouse may not be the thing that still works.
 
 Before it erases anything the recovery program shows you the disk number, model,
 serial number, size and every partition currently on it, and requires you to type
@@ -258,11 +335,13 @@ Redistributable is not required.
 | [`docs/bitlocker.md`](docs/bitlocker.md) | How BitLocker is handled, and the measurement behind it |
 | [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md) | Recovering a computer, step by step |
 | [`docs/encryption.md`](docs/encryption.md) | Encrypting a backup, what it hides and what it does not |
-| [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media, and why it is not automated yet |
-| [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back (designed, not built) |
+| [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media out of the Windows parts this computer already has |
+| [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back out of a backup |
 | [`docs/supported-configurations.md`](docs/supported-configurations.md) | Exactly what is supported and what is refused |
 | [`docs/testing.md`](docs/testing.md) | How to run the tests, including the manual matrix |
+| [`docs/vm-testing.md`](docs/vm-testing.md) | The virtual machine harness that proves the whole cycle |
 | [`docs/threat-model.md`](docs/threat-model.md) | What MjolnirVSS treats as hostile, and what it does not defend against |
+| [`docs/automation.md`](docs/automation.md) | Driving it from a script: exit codes, JSON output, nothing that waits for a person |
 | [`docs/roadmap.md`](docs/roadmap.md) | What comes next, in order |
 
 ---

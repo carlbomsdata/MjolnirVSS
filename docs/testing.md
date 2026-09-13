@@ -6,7 +6,7 @@
 cargo test --workspace
 ```
 
-439 tests, no administrator rights, no real disks, no network. Everything that
+677 tests, no administrator rights, no real disks, no network. Everything that
 can be tested without hardware is tested this way, including the entire restore
 path, which runs against temporary files.
 
