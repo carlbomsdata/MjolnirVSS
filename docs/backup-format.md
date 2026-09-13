@@ -176,6 +176,50 @@ must refuse to restore any backup containing one.** A stream declaring
 `vss-raw` or `raw-full` whose segments do not cover its whole length is
 malformed.
 
+#### `used_blocks`: what a used block capture measured
+
+Present only when `capture` is `vss-used-blocks`, and absent otherwise.
+
+```json
+"used_blocks": {
+  "cluster_size": 4096,
+  "clusters_total": 488165375,
+  "clusters_allocated": 91240118,
+  "bitmap_bytes": 1999525376,
+  "undescribed_tail_bytes": 4096,
+  "reserved_bytes": 69632,
+  "extent_count": 20412
+}
+```
+
+- `cluster_size` is the filesystem's allocation unit.
+- `clusters_total` is how many clusters the allocation bitmap described, and
+  `bitmap_bytes` is that multiplied by `cluster_size`.
+- `clusters_allocated` is how many of them were in use.
+- `undescribed_tail_bytes` is the part of the partition the filesystem says
+  nothing about, at the end. Normally one cluster, holding the spare copy of the
+  NTFS boot sector and the partial cluster before it. **It is captured in full**,
+  because nothing available says it is free.
+- `reserved_bytes` is what was captured beyond the allocated clusters: the boot
+  sectors and both copies of the master file table.
+- `extent_count` is how many separate ranges were read, after merging.
+
+These figures are descriptive. A reader restores a stream from its `segments`
+and its `sparse_fill`, exactly as it would any other, and needs none of them.
+
+#### `fallback_reason`: why a stream was captured whole
+
+Present only when used block imaging was wanted and could not be used, in which
+case `capture` reads `vss-raw` and this says why:
+
+```json
+"fallback_reason": "the volume did not report which of its clusters are in use"
+```
+
+Falling back captures more, never less, so such a stream is as restorable as any
+other. The field exists so that a backup is never quietly larger than expected
+without saying why.
+
 ### `disk-head` and `disk-tail`
 
 `disk-head` covers byte zero up to the first partition: the protective master
@@ -334,6 +378,8 @@ A conforming reader must reject a backup that fails any of these.
   the block index is in range.
 - Segments sorted ascending and non overlapping.
 - A stream whose `capture` forbids gaps covers its whole length.
+- A stream carrying `used_blocks` declares `capture` as `vss-used-blocks`, and
+  one carrying `fallback_reason` does not.
 - No two streams on the same disk cover the same byte.
 
 **Disks**

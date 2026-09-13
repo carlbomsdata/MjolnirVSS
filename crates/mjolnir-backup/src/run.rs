@@ -193,7 +193,7 @@ fn run_inner(
     // the same code runs here and in the tests that use a synthetic disk.
     progress.begin(stages::READING_SYSTEM, Some(plan.source_bytes));
     let spec = build_capture_spec(plan, request)?;
-    let mut sources = WindowsSources::new(plan, &session);
+    let mut sources = WindowsSources::new(plan, &session, cancel.clone());
     crate::capture::capture_disk(&spec, &mut sources, &mut writer, progress, cancel)?;
 
     for partition in &plan.partitions {
@@ -512,11 +512,16 @@ struct WindowsSources<'a> {
     plan: &'a BackupPlan,
     #[cfg_attr(not(windows), allow(dead_code))]
     session: &'a Session,
+    cancel: CancelToken,
 }
 
 impl<'a> WindowsSources<'a> {
-    fn new(plan: &'a BackupPlan, session: &'a Session) -> Self {
-        Self { plan, session }
+    fn new(plan: &'a BackupPlan, session: &'a Session, cancel: CancelToken) -> Self {
+        Self {
+            plan,
+            session,
+            cancel,
+        }
     }
 }
 
@@ -567,6 +572,58 @@ impl crate::capture::CaptureSources for WindowsSources<'_> {
             extent_length,
         )?;
         Ok(Some(Box::new(device)))
+    }
+
+    fn used_blocks(&mut self, index: usize) -> Result<Option<mjolnir_ntfs::UsedBlockPlan>> {
+        let partition = &self.plan.partitions[index];
+        let Some(volume) = &partition.volume else {
+            return Ok(None);
+        };
+        if !partition.needs_snapshot {
+            return Ok(None);
+        }
+        let Some(device_path) = snapshot_device_for(self.session, &volume.guid_path) else {
+            return Ok(None);
+        };
+
+        // The stream spans the whole partition, and the allocation bitmap
+        // describes the volume. When the two are not the same length, every
+        // offset in the plan would be measured against a different origin from
+        // the one the stream uses, so the whole partition is copied instead.
+        let extent_length = volume
+            .extents
+            .first()
+            .map(|e| e.length)
+            .unwrap_or(partition.partition.length);
+        if extent_length != partition.partition.length {
+            return Err(Error::new(
+                ExitCode::Unsupported,
+                "the volume does not fill its partition",
+                format!(
+                    "the volume occupies {extent_length} bytes of a {} byte partition",
+                    partition.partition.length
+                ),
+                "the partition is copied in full instead",
+            ));
+        }
+
+        let device = Device::open_read(
+            &device_path,
+            self.plan.disk.logical_sector_size,
+            extent_length,
+        )?;
+
+        // The boot sector is read from the shadow copy, not from the live
+        // volume, so the geometry describes the same frozen image the bitmap
+        // and the data come from.
+        let sector_size = self.plan.disk.logical_sector_size.max(512) as usize;
+        let mut sector = vec![0u8; sector_size];
+        device.read_at(0, &mut sector)?;
+        let boot = mjolnir_ntfs::NtfsBootSector::parse(&sector)?;
+
+        let allocation = mjolnir_storage::allocation::read_allocation(&device, &self.cancel)?;
+        let plan = mjolnir_ntfs::plan_used_blocks(&boot, &allocation, partition.partition.length)?;
+        Ok(Some(plan))
     }
 }
 

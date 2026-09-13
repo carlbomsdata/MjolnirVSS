@@ -20,6 +20,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod bitmap;
 pub mod boot;
 
+pub use bitmap::{plan_used_blocks, Allocation, AllocationScan, BitmapPage, UsedBlockPlan};
 pub use boot::{NtfsBootSector, VolumeSignature};

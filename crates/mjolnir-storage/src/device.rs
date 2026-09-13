@@ -19,7 +19,7 @@ use mjolnir_core::error::{Error, Result};
 use mjolnir_core::exit::ExitCode;
 use mjolnir_core::math;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_MORE_DATA, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ,
     FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -209,6 +209,56 @@ impl Device {
         })?;
 
         Ok(returned)
+    }
+
+    /// Issues a control code whose result may not fit in one call.
+    ///
+    /// Returns the bytes written into `output` and whether more remain.
+    /// `ERROR_MORE_DATA` is the documented way several filesystem controls say
+    /// "ask again from where this left off", and it arrives as a failure from
+    /// `DeviceIoControl`, with the output buffer nonetheless filled. Treating it
+    /// as a failure would make paged results unreadable; treating every failure
+    /// as a continuation would turn a real error into a silent truncation, so
+    /// exactly one code is accepted and everything else is still an error.
+    pub fn control_paged(&self, code: u32, input: &[u8], output: &mut [u8]) -> Result<(u32, bool)> {
+        let mut returned = 0u32;
+        let input_ptr = if input.is_empty() {
+            None
+        } else {
+            Some(input.as_ptr() as *const c_void)
+        };
+        let output_ptr = if output.is_empty() {
+            None
+        } else {
+            Some(output.as_mut_ptr() as *mut c_void)
+        };
+
+        // SAFETY: as in control_with. Both buffers are valid for the lengths
+        // passed alongside them and outlive the synchronous call, and `returned`
+        // is a live local that bounds how much of `output` was written.
+        let result = unsafe {
+            DeviceIoControl(
+                self.handle.raw(),
+                code,
+                input_ptr,
+                input.len() as u32,
+                output_ptr,
+                output.len() as u32,
+                Some(&mut returned),
+                None,
+            )
+        };
+
+        match result {
+            Ok(()) => Ok((returned, false)),
+            Err(e) if e.code() == ERROR_MORE_DATA.to_hresult() => Ok((returned, true)),
+            Err(e) => Err(Error::new(
+                ExitCode::Io,
+                format!("a device query against {} failed", self.path),
+                format!("Windows rejected control code {code:#010x}: {e}"),
+                "check that the drive is still connected; if this is a physical disk, MjolnirVSS must be running as administrator",
+            )),
+        }
     }
 
     /// Issues a control code, returning `None` when Windows says the device

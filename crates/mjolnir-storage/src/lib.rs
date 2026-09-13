@@ -16,6 +16,8 @@
 pub mod gpt;
 
 #[cfg(windows)]
+pub mod allocation;
+#[cfg(windows)]
 pub mod bitlocker;
 #[cfg(windows)]
 pub mod device;
@@ -30,6 +32,8 @@ pub mod wmi;
 
 pub use gpt::{GptHeader, GptPartitionEntry, ParsedGpt};
 
+#[cfg(windows)]
+pub use allocation::read_allocation;
 #[cfg(windows)]
 pub use bitlocker::{inspect as inspect_encryption, Encryption, PartitionEncryption};
 #[cfg(windows)]

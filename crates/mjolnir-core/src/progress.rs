@@ -21,6 +21,17 @@ pub trait Progress: Send {
     fn end(&mut self);
     /// Prints a line that is not part of the progress display.
     fn note(&mut self, message: &str);
+    /// Reports that `bytes` of the phase total will never be processed.
+    ///
+    /// Used block imaging plans a partition in full and then reads only the
+    /// parts holding data, so without this the bar would stop short of its own
+    /// total and look like a stall at the end of every volume.
+    ///
+    /// The default implementation counts the bytes as done, which is right for
+    /// any display that only tracks a running figure.
+    fn skipped(&mut self, bytes: u64) {
+        self.advance(bytes);
+    }
 }
 
 /// Discards everything. Used by tests and by machine readable commands.

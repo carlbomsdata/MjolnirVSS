@@ -357,6 +357,32 @@ pub struct VolumeEntry {
     pub index_path: Option<String>,
 }
 
+/// What a used block capture measured, recorded so a reader can tell how much
+/// of a volume was skipped and why the result is the size it is.
+///
+/// Present only on a stream captured with [`CaptureMethod::VssUsedBlocks`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsedBlockInfo {
+    /// Cluster size of the filesystem, in bytes.
+    pub cluster_size: u32,
+    /// Clusters the allocation bitmap described.
+    pub clusters_total: u64,
+    /// Clusters the bitmap said were in use.
+    pub clusters_allocated: u64,
+    /// Bytes of the partition the bitmap covers, which is
+    /// `clusters_total * cluster_size`.
+    pub bitmap_bytes: u64,
+    /// Bytes at the end of the partition the filesystem describes nothing
+    /// about, and which were therefore captured in full.
+    pub undescribed_tail_bytes: u64,
+    /// Bytes captured beyond the allocated clusters, because the format
+    /// requires them: the boot sectors and both copies of the master file
+    /// table.
+    pub reserved_bytes: u64,
+    /// Number of extents the capture read, after merging.
+    pub extent_count: u64,
+}
+
 /// What a stream carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -414,6 +440,15 @@ pub struct Stream {
     pub source: String,
     /// The covered pieces, sorted ascending and never overlapping.
     pub segments: Vec<Segment>,
+    /// What a used block capture measured, when this stream was one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_blocks: Option<UsedBlockInfo>,
+    /// Why this stream was captured whole when used block imaging was wanted.
+    ///
+    /// Present only when the fallback was taken, so that a backup never leaves
+    /// the operator to infer from the size that something did not work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
 }
 
 impl Stream {

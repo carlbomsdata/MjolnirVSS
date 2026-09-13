@@ -211,6 +211,8 @@ impl BackupWriter {
                 sparse_fill: SparseFill::Zero,
                 source: source.into(),
                 segments: Vec::new(),
+                used_blocks: None,
+                fallback_reason: None,
             },
             last_end: 0,
         }
@@ -277,6 +279,21 @@ impl StreamWriter<'_> {
     /// The stream's logical length.
     pub fn length(&self) -> u64 {
         self.stream.length
+    }
+
+    /// Records what a used block capture measured.
+    pub fn set_used_blocks(&mut self, info: crate::manifest::UsedBlockInfo) {
+        self.stream.used_blocks = Some(info);
+    }
+
+    /// Records that used block imaging was wanted and could not be used.
+    ///
+    /// Changes the recorded capture method too, so the manifest never claims a
+    /// method the stream was not actually captured with.
+    pub fn fall_back_to(&mut self, capture: CaptureMethod, reason: impl Into<String>) {
+        self.stream.capture = capture;
+        self.stream.used_blocks = None;
+        self.stream.fallback_reason = Some(reason.into());
     }
 
     /// Records one piece of the stream.

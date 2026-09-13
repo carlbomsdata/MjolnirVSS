@@ -20,6 +20,8 @@
 pub mod corrupt;
 pub mod disk;
 pub mod file_device;
+pub mod ntfs;
 
 pub use disk::{SyntheticDisk, SyntheticPartition};
 pub use file_device::FileBlockDevice;
+pub use ntfs::SyntheticNtfs;

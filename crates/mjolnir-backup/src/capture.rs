@@ -20,6 +20,7 @@ use mjolnir_core::progress::Progress;
 use mjolnir_image::disk_layout::DiskEntry;
 use mjolnir_image::manifest::{CaptureMethod, StreamKind};
 use mjolnir_image::writer::BackupWriter;
+use mjolnir_ntfs::bitmap::UsedBlockPlan;
 
 /// Where the bytes of a capture come from.
 pub trait CaptureSources {
@@ -33,6 +34,20 @@ pub trait CaptureSources {
     /// what happens for the EFI system partition and the Microsoft Reserved
     /// partition, neither of which the shadow copy service handles.
     fn open_partition(&mut self, index: usize) -> Result<Option<Box<dyn BlockSource>>>;
+
+    /// Which parts of a partition hold data, when that can be established.
+    ///
+    /// Returning `None` means "copy the whole thing", which is always correct
+    /// and is what happens for a filesystem this version does not understand.
+    /// An error means the same thing: used block imaging is an optimisation of
+    /// a correct operation, so failing to plan one falls back rather than
+    /// failing the backup. Either way the reason is recorded in the manifest.
+    ///
+    /// The default implementation declines, so a test source only has to
+    /// implement it when it is testing this.
+    fn used_blocks(&mut self, _index: usize) -> Result<Option<UsedBlockPlan>> {
+        Ok(None)
+    }
 }
 
 /// How one partition is to be captured.
@@ -121,6 +136,15 @@ pub fn capture_disk(
         cancel.check()?;
         let partition = &spec.disk.partitions[index];
 
+        // Asked for before the source is opened, because planning needs the
+        // sources by mutable reference and the open source borrows them for as
+        // long as it lives.
+        let used = if capture.capture == CaptureMethod::VssUsedBlocks {
+            plan_used_blocks(index, sources)
+        } else {
+            UsedBlockDecision::NotWanted
+        };
+
         // Either a consistent source for this partition, or the disk itself at
         // the partition's offset.
         let (mut source, source_offset) = match sources.open_partition(index)? {
@@ -139,18 +163,127 @@ pub fn capture_disk(
             capture.source_description.clone(),
         );
 
-        copy_range(
-            source.as_mut(),
-            source_offset,
-            capture.planned_bytes,
-            &mut stream,
-            progress,
-            cancel,
-        )?;
+        match used {
+            UsedBlockDecision::Use(plan) => {
+                stream.set_used_blocks(used_block_info(&plan)?);
+                copy_extents(
+                    source.as_mut(),
+                    source_offset,
+                    plan.extents.ranges(),
+                    &mut stream,
+                    progress,
+                    cancel,
+                )?;
+                // The planned figure counted the whole partition, so the
+                // progress total has to be told about the bytes nobody read.
+                let captured = plan.captured_bytes()?;
+                if captured < capture.planned_bytes {
+                    progress.skipped(capture.planned_bytes - captured);
+                }
+            }
+            UsedBlockDecision::FallBack(reason) => {
+                stream.fall_back_to(CaptureMethod::VssRaw, reason);
+                copy_range(
+                    source.as_mut(),
+                    source_offset,
+                    capture.planned_bytes,
+                    &mut stream,
+                    progress,
+                    cancel,
+                )?;
+            }
+            UsedBlockDecision::NotWanted => {
+                copy_range(
+                    source.as_mut(),
+                    source_offset,
+                    capture.planned_bytes,
+                    &mut stream,
+                    progress,
+                    cancel,
+                )?;
+            }
+        }
         stream.finish()?;
     }
 
     capture_table(spec, sources, writer, progress, cancel)
+}
+
+/// What the capture decided to do about used block imaging for one partition.
+enum UsedBlockDecision {
+    /// Read only these ranges.
+    Use(Box<UsedBlockPlan>),
+    /// Read the whole partition, for this reason.
+    FallBack(String),
+    /// Used block imaging was never asked for.
+    NotWanted,
+}
+
+/// Asks the sources what is in use, turning any answer into a decision.
+///
+/// A failure here is deliberately not a failure of the backup. Used block
+/// imaging makes a correct operation faster; when it cannot be planned, the
+/// correct operation still happens, and the manifest says why it had to.
+fn plan_used_blocks(index: usize, sources: &mut dyn CaptureSources) -> UsedBlockDecision {
+    match sources.used_blocks(index) {
+        Ok(Some(plan)) => UsedBlockDecision::Use(Box::new(plan)),
+        Ok(None) => UsedBlockDecision::FallBack(
+            "the volume did not report which of its clusters are in use".to_owned(),
+        ),
+        Err(e) => UsedBlockDecision::FallBack(format!("{}: {}", e.what(), e.why())),
+    }
+}
+
+/// Turns a plan into the figures the manifest records.
+fn used_block_info(plan: &UsedBlockPlan) -> Result<mjolnir_image::manifest::UsedBlockInfo> {
+    Ok(mjolnir_image::manifest::UsedBlockInfo {
+        cluster_size: plan.cluster_size,
+        clusters_total: plan.clusters_total,
+        clusters_allocated: plan.clusters_allocated,
+        bitmap_bytes: plan.described_bytes,
+        undescribed_tail_bytes: plan.undescribed_tail_bytes,
+        reserved_bytes: plan.reserved_bytes,
+        extent_count: plan.extent_count() as u64,
+    })
+}
+
+/// Copies a set of ranges, leaving everything between them uncaptured.
+///
+/// `ranges` are offsets within the stream. They are required to be ascending
+/// and non overlapping, which is what [`ExtentList`](mjolnir_core::extents::ExtentList)
+/// guarantees, and the stream writer checks again on every segment.
+fn copy_extents(
+    source: &mut dyn BlockSource,
+    source_offset: u64,
+    ranges: &[mjolnir_core::extents::ByteRange],
+    stream: &mut mjolnir_image::writer::StreamWriter<'_>,
+    progress: &mut dyn Progress,
+    cancel: &CancelToken,
+) -> Result<()> {
+    let chunk_size = u64::from(mjolnir_image::manifest::DEFAULT_CHUNK_SIZE);
+    let mut buffer = vec![0u8; math::to_usize("chunk buffer", chunk_size)?];
+
+    for range in ranges {
+        let end = range.end()?;
+        let mut at = range.offset;
+        while at < end {
+            cancel.check()?;
+            // Cut on multiples of the chunk size measured from the start of the
+            // stream, so the same region produces the same chunk boundaries in
+            // every backup regardless of where an extent happens to begin.
+            let to_boundary = chunk_size - (at % chunk_size);
+            let want = to_boundary.min(end - at);
+            let slice = &mut buffer[..math::to_usize("chunk length", want)?];
+
+            let from = math::add_u64("copy offset", source_offset, at)?;
+            source.read_exact_at(from, slice)?;
+
+            stream.write_segment(at, slice)?;
+            progress.advance(want);
+            at = math::add_u64("copy cursor", at, want)?;
+        }
+    }
+    Ok(())
 }
 
 /// Copies the two regions holding the partition table.

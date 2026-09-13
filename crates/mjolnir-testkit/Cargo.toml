@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 mjolnir-core = { workspace = true }
 mjolnir-image = { workspace = true }
+mjolnir-ntfs = { workspace = true }
 mjolnir-storage = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

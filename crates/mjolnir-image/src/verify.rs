@@ -286,6 +286,8 @@ mod tests {
             sparse_fill: crate::manifest::SparseFill::Zero,
             source: "test".to_owned(),
             segments,
+            used_blocks: None,
+            fallback_reason: None,
         }
     }
 

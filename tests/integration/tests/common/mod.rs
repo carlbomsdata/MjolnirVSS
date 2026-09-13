@@ -216,3 +216,69 @@ pub fn target_disk(number: u32, size_bytes: u64, sector_size: u32) -> mjolnir_re
         holds_the_backup: false,
     }
 }
+
+/// Restores a finished backup onto a blank file backed disk and returns its
+/// bytes.
+///
+/// The target is created blank, which is what the restore engine requires, so
+/// anything nonzero in the result was written by the restore.
+pub fn restore_to_file(backup_dir: &Path, temp: &Path, target_size: u64) -> Vec<u8> {
+    let set = mjolnir_image::BackupSet::open(backup_dir).expect("the backup should open");
+    let sector_size = set
+        .disk_layout()
+        .disks
+        .first()
+        .map(|d| d.logical_sector_size)
+        .unwrap_or(512);
+    let target = target_disk(1, target_size, sector_size);
+    let plan = mjolnir_restore::plan(&set, &target).expect("the restore should plan");
+    let confirmation = mjolnir_restore::EraseConfirmation::check(&target, &target.erase_phrase())
+        .expect("the phrase should be accepted");
+
+    let name = backup_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "restored".to_owned());
+    let mut device = mjolnir_testkit::FileBlockDevice::create(
+        temp.join(format!("{name}-restored.img")),
+        target_size,
+        sector_size,
+    )
+    .expect("create target");
+
+    let mut progress = SilentProgress;
+    mjolnir_restore::restore(
+        &set,
+        &plan,
+        &target,
+        &confirmation,
+        &mut device,
+        &mut progress,
+        &CancelToken::new(),
+    )
+    .expect("the restore should succeed");
+
+    device.read_all().expect("read the restored disk")
+}
+
+/// Reads a finished backup's manifest.
+pub fn read_manifest(backup_dir: &Path) -> mjolnir_image::manifest::Manifest {
+    mjolnir_image::BackupSet::open(backup_dir)
+        .expect("the backup should open")
+        .manifest()
+        .clone()
+}
+
+/// Verifies a finished backup from its folder, as a later check would.
+pub fn verify_backup(backup_dir: &Path) -> VerifyReport {
+    let set = mjolnir_image::BackupSet::open(backup_dir).expect("the backup should open");
+    mjolnir_image::verify::verify(
+        set.manifest(),
+        Some(set.disk_layout()),
+        &set.chunk_store(),
+        VerifyDepth::Full,
+        &mut SilentProgress,
+        &CancelToken::new(),
+    )
+    .expect("verification should run")
+}
