@@ -196,6 +196,21 @@
   </settings>
 
   <settings pass="oobeSystem">
+    <!-- Without this the out of box experience still asks for a country and a
+         keyboard layout, even with everything below filled in. Setting the
+         locales here is what removes those two pages. -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-GB</InputLocale>
+      <SystemLocale>en-GB</SystemLocale>
+      <UILanguage>en-GB</UILanguage>
+      <UILanguageFallback>en-GB</UILanguageFallback>
+      <UserLocale>en-GB</UserLocale>
+    </component>
+
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
