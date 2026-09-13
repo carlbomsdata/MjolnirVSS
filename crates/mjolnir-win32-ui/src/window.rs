@@ -126,6 +126,15 @@ impl Window {
         }
     }
 
+    /// Says which control Enter presses when the keyboard is elsewhere.
+    ///
+    /// Without this, Enter reaches a button only when that button already has
+    /// focus, so a window whose keyboard starts anywhere else cannot be
+    /// advanced by pressing Enter.
+    pub fn set_default_button(&self, id: i32) {
+        DEFAULT_BUTTON.with(|cell| cell.set(id));
+    }
+
     /// Gives keyboard focus to one of this window's controls.
     pub fn focus(&self, child: HWND) {
         if child.is_invalid() {
@@ -235,6 +244,24 @@ pub trait WindowHandler: 'static {
         let _ = window;
         true
     }
+}
+
+/// `DM_GETDEFID`, which the Windows headers define as `WM_USER + 0`.
+///
+/// Not in the `windows` crate, so it is written out here with the value the
+/// documentation gives.
+const DM_GETDEFID: u32 = 0x0400;
+
+/// `DC_HASDEFID`, the high word of the reply saying the identifier is real.
+const DC_HASDEFID: u32 = 0x0001;
+
+thread_local! {
+    /// The control Enter presses when the keyboard is not on a button.
+    ///
+    /// `IsDialogMessageW` asks the window for this with `DM_GETDEFID`. A real
+    /// dialog answers it; a plain window does not, which is why Enter used to
+    /// do nothing at all unless a button already had the keyboard.
+    static DEFAULT_BUTTON: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
@@ -452,6 +479,15 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         WM_SETFOCUS => {
             with_handler(|h| h.on_activate(&window));
             LRESULT(0)
+        }
+        // What IsDialogMessageW asks before it turns Enter into a button press.
+        DM_GETDEFID => {
+            let id = DEFAULT_BUTTON.with(|cell| cell.get());
+            if id == 0 {
+                LRESULT(0)
+            } else {
+                LRESULT(((DC_HASDEFID as isize) << 16) | (id as isize & 0xFFFF))
+            }
         }
         WM_COMMAND => {
             let id = (wparam.0 & 0xFFFF) as i32;

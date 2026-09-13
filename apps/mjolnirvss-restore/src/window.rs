@@ -841,6 +841,8 @@ impl RecoveryWindow {
 
 impl WindowHandler for RecoveryWindow {
     fn on_create(&mut self, window: &Window) {
+        // Enter means Next, wherever the keyboard happens to be.
+        window.set_default_button(ID_NEXT);
         self.show_step(window, Step::FindBackup);
     }
 

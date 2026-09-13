@@ -479,13 +479,18 @@ impl BackupWindow {
         }
         self.layout(window);
 
-        let focus = match screen {
-            Screen::Menu => self.controls.backup,
-            Screen::Destination => self.controls.start,
-            Screen::Progress => self.controls.cancel,
-            Screen::Result => self.controls.close,
-            Screen::Browse => self.controls.browse_list,
+        // Where the keyboard goes, and what Enter means, for each screen. Enter
+        // needs saying separately: a plain window does not answer the question
+        // the dialog manager asks before turning Enter into a button press, so
+        // without this it works only while a button already has the keyboard.
+        let (focus, default) = match screen {
+            Screen::Menu => (self.controls.backup, ID_BACKUP),
+            Screen::Destination => (self.controls.start, ID_START),
+            Screen::Progress => (self.controls.cancel, ID_CANCEL),
+            Screen::Result => (self.controls.close, ID_CLOSE),
+            Screen::Browse => (self.controls.browse_list, ID_BROWSE_OPEN),
         };
+        window.set_default_button(default);
         window.focus(focus);
         window.invalidate();
     }
