@@ -136,7 +136,8 @@ $vmxPath = New-LabVmx `
     -Disks @($systemDisk, $backupDisk) `
     -IsoPaths @($WindowsIso, $payloadIso) `
     -SecureBoot `
-    -SerialLog $serialLog
+    -SerialLog $serialLog `
+    -VncPort 5990
 
 Write-LabStep "wrote $vmxPath"
 

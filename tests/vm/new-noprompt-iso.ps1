@@ -109,6 +109,16 @@ Get-ChildItem -LiteralPath $extract -Recurse -File -Force |
 foreach ($name in $Inject.Keys) {
     Write-LabStep "placing $name at the root of the disc"
     Copy-Item -LiteralPath $Inject[$name] -Destination (Join-Path $extract $name) -Force
+
+    # Setup looks in \sources as well as at the root. Putting a copy in both
+    # means a change in which location it prefers does not silently turn the
+    # unattended install back into an interactive one.
+    if ($name -ieq 'autounattend.xml') {
+        $sources = Join-Path $extract 'sources'
+        if (Test-Path -LiteralPath $sources) {
+            Copy-Item -LiteralPath $Inject[$name] -Destination (Join-Path $sources 'unattend.xml') -Force
+        }
+    }
 }
 
 $oscdimgDir = Split-Path -Parent (Get-OscdimgPath)

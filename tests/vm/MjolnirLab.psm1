@@ -197,6 +197,7 @@ function New-LabVmx {
         [string[]] $IsoPaths = @(),
         [switch] $SecureBoot,
         [string] $SerialLog,
+        [int] $VncPort = 0,
         [string] $GuestOS = 'windows11-64'
     )
 
@@ -260,6 +261,17 @@ function New-LabVmx {
     & $add 'ethernet0.connectionType = "nat"'
     & $add 'ethernet0.virtualDev = "e1000e"'
     & $add 'ethernet0.addressType = "generated"'
+
+    # The framebuffer, served over VNC on the loopback address. This is how the
+    # harness sees a machine with no VMware Tools: Windows Setup while it runs,
+    # Windows PE while the recovery application is on screen, and a restored
+    # Windows that has never been logged into. Nothing is sent to the machine
+    # through it.
+    if ($VncPort -gt 0) {
+        & $add 'RemoteDisplay.vnc.enabled = "TRUE"'
+        & $add "RemoteDisplay.vnc.port = `"$VncPort`""
+        & $add 'RemoteDisplay.vnc.ip = "127.0.0.1"'
+    }
 
     if ($SerialLog) {
         & $add 'serial0.present = "TRUE"'
