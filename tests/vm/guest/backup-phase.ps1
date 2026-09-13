@@ -90,6 +90,16 @@ try {
     $destination = Join-Path $root 'Backups'
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
+    # A run that failed leaves a folder behind with no completion marker in it.
+    # That is deliberate, so somebody can see what happened, but a test machine
+    # that repeats the phase would fill its destination with them.
+    foreach ($old in Get-ChildItem $destination -Directory -ErrorAction SilentlyContinue) {
+        if (-not (Test-Path (Join-Path $old.FullName 'completion.json'))) {
+            Report "removing an unfinished backup from an earlier run: $($old.Name)"
+            Remove-Item $old.FullName -Recurse -Force
+        }
+    }
+
     # ---- what would be captured -----------------------------------------
     Report 'inspect:'
     Report-Many (& $exe inspect 2>&1 | Out-String)

@@ -1,0 +1,156 @@
+# The virtual machine test harness
+
+The tests that decide whether MjolnirVSS works cannot run on a build server.
+They need a real Windows installation to back up, a blank disk to restore onto,
+and somebody to watch the machine start. This harness does all three inside
+disposable VMware Workstation virtual machines.
+
+It is **opt in**. Nothing here runs as part of `cargo test`, and nothing here is
+needed to build MjolnirVSS.
+
+---
+
+## What it will not touch
+
+Enforced in code, in [`MjolnirLab.psm1`](../tests/vm/MjolnirLab.psm1), not left
+as a rule to remember:
+
+- every file it creates lives under one lab root, resolved and checked before
+  anything is written or deleted;
+- a virtual machine is only stopped, reverted or deleted when **both** its files
+  are inside that root **and** its name begins with `MjolnirVSS-Test-`;
+- it never writes to a physical disk;
+- it never reads, starts or modifies a virtual machine it did not create.
+
+The lab root defaults to `C:\MjolnirVSS-TestLab` and can be moved with the
+`MJOLNIR_LAB_ROOT` environment variable. Nothing in it belongs in the
+repository, and nothing in it is committed.
+
+---
+
+## What you need
+
+| | |
+|---|---|
+| VMware Workstation | 17 or later, for `vmrun` and `vmware-vdiskmanager` |
+| Windows 11 x64 installation media | An ordinary ISO. Nothing is redistributed |
+| Windows ADK | With the Deployment Tools and the Windows PE add-on |
+| Free space | About 200 GB for the whole cycle |
+| Python 3 | With Pillow, for the screen tools below |
+
+---
+
+## The machines
+
+| Name | What it is |
+|---|---|
+| `MjolnirVSS-Test-Source` | Windows 11, UEFI, GPT, NVMe. EFI, Microsoft Reserved, Windows and recovery partitions, plus a second disk to write backups to |
+| `MjolnirVSS-Test-Restore` | A blank target disk, the source's backup disk, and MjolnirVSS recovery media in the drive |
+
+```powershell
+pwsh -File tests\vm\new-source-vm.ps1      # installs Windows, unattended
+pwsh -File tests\vm\new-payload.ps1 -Vmx <vmx>   # a disc with a fresh build on it
+pwsh -File tests\vm\new-restore-vm.ps1     # the machine the restore is proved on
+```
+
+---
+
+## Talking to a machine that has no VMware Tools
+
+Every machine the harness drives is one Tools cannot be installed into: Windows
+Setup while it runs, Windows PE while the recovery application is on screen, a
+restored Windows that has never been logged into. So the harness uses two
+channels that need nothing inside the guest.
+
+**A serial port, for what the guest says.** Each machine has `COM1` backed by a
+file on the host. The guest scripts write their progress to it, and the harness
+reads that file. This is how a phase reports `PHASE-BACKUP-COMPLETE` or the
+reason it did not.
+
+**VNC, for what the guest shows and what it is told.** VMware Workstation serves
+the framebuffer on the loopback address, and the same connection carries key and
+pointer events.
+
+```powershell
+python tests\vm\tools\vnc_screenshot.py --port 5990 --out screen.png --text
+python tests\vm\tools\vnc_input.py --port 5990 --keys "Tab Tab Return"
+python tests\vm\tools\vnc_input.py --port 5990 --type "hello"
+```
+
+The screenshot tool is what proves the recovery application draws its window in
+Windows PE, and the input tool is what proves the window can be operated from
+the keyboard alone.
+
+**The payload disc, for getting files in.** A build of MjolnirVSS and the guest
+scripts are put on a small ISO and left in the machine's second drive.
+
+---
+
+## Things that went wrong, and why they are written down
+
+Each of these cost a run, and each is now handled by the harness rather than by
+somebody remembering.
+
+**VMware crashed on a hand written machine.** A `.vmx` without the PCI bridge
+devices runs out of PCIe slots part way through building itself, and
+`vmware-vmx` exits with an access violation rather than a message. The bridges
+are now always written.
+
+**The installation disc waited for a key press.** A Windows disc boots through
+an EFI image that prints "Press any key to boot from CD or DVD" and gives up
+after a few seconds. With nobody watching, the firmware times out and boots
+nothing. The disc is rebuilt once with `efisys_noprompt.bin` from the ADK.
+
+**The answer file asked for a language the disc did not have.** The media is
+English International, which carries `en-GB` only. Asking for `en-US` made Setup
+abandon the answer file and show its language page. Setup does not say so; it
+simply becomes interactive.
+
+**The answer file did not reach the out of box experience.** Locales set in the
+Windows PE pass do not suppress the region and keyboard pages. They need a
+`Microsoft-Windows-International-Core` component in the `oobeSystem` pass.
+
+**The guest keyboard is not the host keyboard.** Key events are sent as keysyms
+and translated through the guest's layout, so on a `en-GB` guest a backslash
+arrives as `#` and a pipe as `~`. The guest scripts are run with forward slash
+paths, which PowerShell accepts.
+
+---
+
+## What the harness found in MjolnirVSS itself
+
+This is the point of it. Both of these passed every synthetic test and failed on
+the first real Windows volume.
+
+**A shadow copy is shorter than its partition.** NTFS keeps a spare copy of its
+boot sector in the last sector of the partition, outside the filesystem. A
+shadow copy covers the filesystem, so reading the last sector through it fails
+with "reached the end of the file". MjolnirVSS now reads that tail from the
+disk, which is safe for the same reason the boot partitions are.
+
+**The device will not tell you where it ends.** `IOCTL_DISK_GET_LENGTH_INFO` on
+a shadow copy device reports the whole partition, and reads past the end of the
+filesystem inside it still fail. The filesystem's own boot sector is asked
+instead.
+
+---
+
+## The phases
+
+Each phase is a script the guest runs, reporting over the serial port.
+
+| Phase | What it proves |
+|---|---|
+| `setup-guest.ps1` | The source machine exists, with files chosen to exercise fragmentation, sparse files, NTFS compression, Unicode names, alternate data streams, hard links and reparse points, each with a recorded hash |
+| `backup-phase.ps1` | A live backup of a running Windows completes, verifies, and a damaged copy of it is refused |
+| `files-phase.ps1` | Files come back out of the backup with the bytes they went in with, checked against the recorded hashes |
+
+The restore phase runs in the recovery machine, from the recovery media, and is
+the one the whole thing exists for.
+
+---
+
+## Throwing it away
+
+The lab is disposable. Delete the lab root and the machines are gone; nothing
+else on the computer was changed, and nothing was installed.
