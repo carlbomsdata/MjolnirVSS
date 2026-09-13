@@ -108,6 +108,28 @@ impl<'a> Volume<'a> {
 
     /// Reads and parses one record of the master file table.
     pub fn record(&mut self, number: u64) -> Result<FileRecord> {
+        let bytes = self.record_bytes(number)?;
+        FileRecord::parse(&bytes, u32::from(self.boot.bytes_per_sector))
+    }
+
+    /// Reads one slot of the master file table, saying when it has never held
+    /// a file.
+    ///
+    /// The table is allocated in advance, so a volume with room for a hundred
+    /// thousand files and thirty thousand on it has seventy thousand slots of
+    /// zeros. Those are not files that could not be read; they are space that
+    /// has not been used yet, and a recovery tool that counts them as damage
+    /// frightens people for nothing.
+    pub fn record_slot(&mut self, number: u64) -> Result<Option<FileRecord>> {
+        let bytes = self.record_bytes(number)?;
+        if bytes.iter().all(|b| *b == 0) {
+            return Ok(None);
+        }
+        FileRecord::parse(&bytes, u32::from(self.boot.bytes_per_sector)).map(Some)
+    }
+
+    /// The raw bytes of one slot of the master file table.
+    fn record_bytes(&mut self, number: u64) -> Result<Vec<u8>> {
         let offset = math::mul_u64("file record offset", number, self.record_size)?;
         let mut bytes = vec![0u8; self.record_size as usize];
         self.read_from_runs(
@@ -117,7 +139,7 @@ impl<'a> Volume<'a> {
             offset,
             &mut bytes,
         )?;
-        FileRecord::parse(&bytes, u32::from(self.boot.bytes_per_sector))
+        Ok(bytes)
     }
 
     /// Reads part of an attribute's contents.
@@ -319,6 +341,8 @@ pub struct FileIndex {
     pub unreadable: Vec<(u64, String)>,
     /// How many records were looked at.
     pub records_scanned: u64,
+    /// How many slots have never held a file. Not a problem: space.
+    pub records_unused: u64,
 }
 
 impl FileIndex {
@@ -333,8 +357,12 @@ impl FileIndex {
             }
             index.records_scanned += 1;
 
-            let record = match volume.record(number) {
-                Ok(record) => record,
+            let record = match volume.record_slot(number) {
+                Ok(Some(record)) => record,
+                Ok(None) => {
+                    index.records_unused += 1;
+                    continue;
+                }
                 Err(e) => {
                     // A record that cannot be read is one file lost, not a
                     // failed recovery. It is counted and named.

@@ -1023,9 +1023,10 @@ fn cmd_browse(
     if !index.unreadable.is_empty() {
         println!();
         println!(
-            "  {} of {} records in this volume could not be read:",
+            "  {} of {} records in this volume could not be read              ({} more have never held a file):",
             index.unreadable.len(),
-            index.records_scanned
+            index.records_scanned,
+            index.records_unused
         );
         // A bare count says nothing about whether anybody's files are affected.
         // Grouping by reason does: a volume whose unused records simply have no

@@ -798,3 +798,48 @@ fn a_bitlocker_partition_says_so_rather_than_failing_to_open() {
         "it should say what does work: {why}"
     );
 }
+
+/// A real Windows volume has a master file table with far more slots in it than
+/// files, and the spare ones are zeros. Counting those as records that could
+/// not be read told somebody recovering their files that 175 of them were
+/// damaged when the volume was perfectly healthy.
+#[test]
+fn slots_that_never_held_a_file_are_not_reported_as_damage() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut subject = Subject::build();
+
+    // Everything past the files is left as zeros, as a real volume leaves it.
+    let (_, offset, length) = subject.disk.partitions[subject.index].clone();
+    subject.volume = planned_volume(length).zeroed_from(record::LINKED + 1);
+    let bytes = subject.volume.build();
+    let from = offset as usize;
+    subject.disk.bytes[from..from + bytes.len()].copy_from_slice(&bytes);
+
+    let dir = back_up(&subject, temp.path());
+    let set = BackupSet::open(&dir).unwrap();
+    let stream = mjolnir_files::stream_in(&set, &subject.stream_id()).unwrap();
+    let open = OpenVolume::open(&set, stream, &CancelToken::new()).unwrap();
+    let index = open.index();
+
+    assert!(
+        index.records_unused > 0,
+        "the fixture should have unused slots in it"
+    );
+    assert!(
+        index.unreadable.is_empty(),
+        "an unused slot is space, not damage: {:?}",
+        index.unreadable
+    );
+    // And the files are all still there.
+    assert_eq!(
+        index.path_of(record::README).as_deref(),
+        Some("\\readme.txt")
+    );
+    // Every slot in the table was looked at, and the ones with nothing in them
+    // are counted as nothing rather than as a loss.
+    assert_eq!(index.records_scanned, subject.volume.record_count());
+    assert!(
+        index.records_unused + index.len() as u64 <= index.records_scanned,
+        "more records were accounted for than were scanned"
+    );
+}

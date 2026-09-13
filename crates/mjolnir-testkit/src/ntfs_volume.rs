@@ -118,6 +118,10 @@ pub struct NtfsVolumeBuilder {
     pub data_cluster: u64,
     /// The files.
     pub files: Vec<PlannedFile>,
+    /// Slots from here on are left as zeros, which is what the unused part of
+    /// a real volume's master file table looks like. `None` writes a proper
+    /// not-in-use record in every slot.
+    pub zeroed_from: Option<u64>,
 }
 
 impl NtfsVolumeBuilder {
@@ -131,6 +135,7 @@ impl NtfsVolumeBuilder {
             mft_clusters: 16,
             data_cluster: 64,
             files: Vec::new(),
+            zeroed_from: None,
         }
     }
 
@@ -142,6 +147,12 @@ impl NtfsVolumeBuilder {
     /// How many records the master file table holds.
     pub fn record_count(&self) -> u64 {
         self.mft_clusters * self.cluster_size() / RECORD_BYTES as u64
+    }
+
+    /// Leaves every slot from `number` on as zeros.
+    pub fn zeroed_from(mut self, number: u64) -> Self {
+        self.zeroed_from = Some(number);
+        self
     }
 
     /// Adds a file or directory to the volume.
@@ -192,7 +203,8 @@ impl NtfsVolumeBuilder {
         // A reader has to walk past these, so they are written properly rather
         // than left as zeros, which is what a freshly formatted volume looks
         // like. The root and the files below overwrite the slots they claim.
-        for number in 1..self.record_count() {
+        let written_slots = self.zeroed_from.unwrap_or(self.record_count());
+        for number in 1..written_slots {
             let at = mft_at + (number as usize) * RECORD_BYTES;
             let record = build_record(
                 number as u32,
