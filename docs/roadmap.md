@@ -29,6 +29,9 @@ reliably.
   the whole volume where that cannot be established.
 - A warning before a backup when taking a shadow copy may cost the machine its
   restore points, which was measured rather than anticipated.
+- Optional encryption of a backup's contents, using Argon2id and AES-256-GCM
+  through their own crates, with the password never stored and never accepted as
+  a command line argument.
 - The backup window and the recovery wizard, the latter run in real Windows PE
   and driven through a whole restore from the keyboard.
 - File recovery: browsing a backup's NTFS volumes read only and copying files
@@ -64,11 +67,12 @@ whose sector size differs from the source's, and a backup taken while the
 machine is genuinely busy rather than idle. A restore that has been done twice
 on one machine may still have been lucky.
 
-### 2. Backup encryption
+### 2. Encryption where people can reach it
 
-A real gap. The password is never stored, the design uses nothing home made, and
-it sits here rather than earlier because an encrypted backup that cannot be
-restored is worse than a plain one that can.
+The engine is built and tested: Argon2id, AES-256-GCM, keyed block names, the
+whole cycle proven against synthetic disks, described in
+[`encryption.md`](encryption.md). What is left is the window, which does not
+offer it, and an encrypted backup of a real machine restored and started.
 
 ### 3. Controlled hardware validation
 

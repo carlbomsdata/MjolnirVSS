@@ -79,6 +79,7 @@ onto a blank replacement disk after the original has failed.
 | Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
 | BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |
 | BitLocker: locked volume | **Refused**, clearly |
+| Encrypting a backup | **Implemented** and tested against synthetic disks, from the command line only. Argon2id and AES-256-GCM, nothing home made. The window does not offer it yet. See [`docs/encryption.md`](docs/encryption.md) |
 | Incremental backups | Not implemented, and deliberately not started until the above works |
 
 ---
@@ -256,6 +257,7 @@ Redistributable is not required.
 | [`docs/vss-lifecycle.md`](docs/vss-lifecycle.md) | How the shadow copy is taken and released |
 | [`docs/bitlocker.md`](docs/bitlocker.md) | How BitLocker is handled, and the measurement behind it |
 | [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md) | Recovering a computer, step by step |
+| [`docs/encryption.md`](docs/encryption.md) | Encrypting a backup, what it hides and what it does not |
 | [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media, and why it is not automated yet |
 | [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back (designed, not built) |
 | [`docs/supported-configurations.md`](docs/supported-configurations.md) | Exactly what is supported and what is refused |
