@@ -56,6 +56,21 @@ impl BorrowedLetter {
         let volume = format!("{}\\", volume.trim_end_matches('\\'));
         let volume_w = wide(&volume);
 
+        // Windows PE mounts the volumes it finds, so a disk restored earlier
+        // and repaired now usually already has letters. A volume cannot be
+        // given a second one, so trying produced "no drive letter was free" and
+        // a repair that could never run on the ordinary case. A letter it
+        // already has is the one to use, and it must not be taken away
+        // afterwards: it was not this program's to borrow.
+        if let Some(letter) = existing_letter(&volume) {
+            if !taken.contains(&letter) {
+                return Ok(Self {
+                    letter,
+                    assigned: false,
+                });
+            }
+        }
+
         for letter in BORROWABLE_LETTERS {
             if taken.contains(&letter) {
                 continue;
@@ -92,6 +107,52 @@ impl BorrowedLetter {
     fn root(&self) -> PathBuf {
         PathBuf::from(format!("{}:\\", self.letter))
     }
+}
+
+/// The drive letter a volume is already mounted at, if it has one.
+#[cfg(windows)]
+fn existing_letter(volume: &str) -> Option<char> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetVolumePathNamesForVolumeNameW;
+
+    let volume_w = wide(volume);
+    let mut buffer = vec![0u16; 512];
+    let mut written = 0u32;
+    // SAFETY: the volume name is a null terminated local that outlives the
+    // call, and the buffer is passed with its own length. A failure means the
+    // answer is simply not known, which the caller handles.
+    let ok = unsafe {
+        GetVolumePathNamesForVolumeNameW(PCWSTR(volume_w.as_ptr()), Some(&mut buffer), &mut written)
+    };
+    if ok.is_err() {
+        return None;
+    }
+
+    // The answer is a run of null terminated paths. A volume can be mounted in
+    // several places; only a drive letter is useful here, because bcdboot is
+    // given one.
+    first_drive_letter(&String::from_utf16_lossy(&buffer[..written as usize]))
+}
+
+/// The first drive letter in a run of null terminated mount paths.
+///
+/// Separated from the call that produces it so the parsing can be tested.
+/// A volume can be mounted in several places, including inside folders;
+/// only a drive letter is useful here, because bcdboot is given one.
+fn first_drive_letter(paths: &str) -> Option<char> {
+    for path in paths.split('\0') {
+        // A drive letter mount point is exactly three characters. Anything
+        // longer is a volume mounted inside a folder, whose leading letter
+        // belongs to a different volume: handing that to bcdboot would
+        // write the boot files to the wrong disk.
+        let path = path.trim();
+        let chars: Vec<char> = path.chars().collect();
+        if chars.len() == 3 && chars[0].is_ascii_alphabetic() && chars[1] == ':' && chars[2] == '\\'
+        {
+            return Some(chars[0].to_ascii_uppercase());
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -433,6 +494,53 @@ fn not_windows() -> Error {
 
 #[cfg(test)]
 mod tests {
+
+    /// Builds what Windows returns for a volume's mount points: each one null
+    /// terminated, and an empty string to end the run.
+    fn mount_paths(points: &[&str]) -> String {
+        let mut out = String::new();
+        for point in points {
+            out.push_str(point);
+            out.push(char::from(0));
+        }
+        out.push(char::from(0));
+        out
+    }
+
+    /// Windows PE mounts what it finds, so the volumes of a disk being repaired
+    /// usually already have letters. Reading the one a volume has is what makes
+    /// a standalone repair possible at all.
+    #[test]
+    fn a_drive_letter_is_read_out_of_the_mount_paths() {
+        assert_eq!(first_drive_letter(&mount_paths(&[r"D:\"])), Some('D'));
+        assert_eq!(first_drive_letter(&mount_paths(&[r"c:\"])), Some('C'));
+    }
+
+    /// A volume mounted only inside a folder has no letter to use, and its path
+    /// begins with the letter of a *different* volume. Handing that to bcdboot
+    /// would write the boot files to the wrong disk.
+    #[test]
+    fn a_folder_mount_point_is_not_a_drive_letter() {
+        assert_eq!(
+            first_drive_letter(&mount_paths(&[r"C:\mount\disk\"])),
+            None,
+            "a path under a folder is not a letter for bcdboot"
+        );
+        assert_eq!(first_drive_letter(""), None);
+        assert_eq!(first_drive_letter(&mount_paths(&[])), None);
+    }
+
+    /// A volume with several mount points still has one letter to use, and the
+    /// folder mount points among them are passed over.
+    #[test]
+    fn a_letter_is_found_past_a_folder_mount_point() {
+        assert_eq!(
+            first_drive_letter(&mount_paths(&[r"E:\games\", r"F:\"])),
+            Some('F'),
+            "the folder mount is skipped and the letter is found"
+        );
+    }
+
     use super::*;
 
     #[test]
