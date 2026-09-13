@@ -106,8 +106,15 @@ def send_key(sock, keysym: int, down: bool) -> None:
 
 
 def press(sock, spec: str, hold: float = 0.02) -> None:
-    """Presses one key, with any modifiers named before a plus sign."""
-    parts = spec.split("+")
+    """Presses one key, with any modifiers named before a plus sign.
+
+    A single character is always itself, so typing a literal plus sign works
+    and is not read as an empty key with a modifier in front of it.
+    """
+    if len(spec) == 1:
+        parts = [spec]
+    else:
+        parts = spec.split("+")
     key = parts[-1]
     modifiers = [MODIFIERS[p.lower()] for p in parts[:-1] if p.lower() in MODIFIERS]
 
