@@ -8,6 +8,7 @@ members = [
     "crates/mjolnir-ntfs",
     "crates/mjolnir-backup",
     "crates/mjolnir-restore",
+    "crates/mjolnir-media",
     "crates/mjolnir-win32-ui",
     "crates/mjolnir-cli",
     "crates/mjolnir-testkit",
@@ -32,6 +33,7 @@ mjolnir-vss = { path = "crates/mjolnir-vss" }
 mjolnir-ntfs = { path = "crates/mjolnir-ntfs" }
 mjolnir-backup = { path = "crates/mjolnir-backup" }
 mjolnir-restore = { path = "crates/mjolnir-restore" }
+mjolnir-media = { path = "crates/mjolnir-media" }
 mjolnir-win32-ui = { path = "crates/mjolnir-win32-ui" }
 mjolnir-cli = { path = "crates/mjolnir-cli" }
 mjolnir-testkit = { path = "crates/mjolnir-testkit" }

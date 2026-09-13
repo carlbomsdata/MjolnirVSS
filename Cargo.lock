@@ -297,6 +297,7 @@ dependencies = [
  "mjolnir-backup",
  "mjolnir-core",
  "mjolnir-image",
+ "mjolnir-media",
  "mjolnir-storage",
  "mjolnir-vss",
  "serde_json",
@@ -336,6 +337,14 @@ dependencies = [
  "mjolnir-storage",
  "mjolnir-testkit",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mjolnir-media"
+version = "0.1.0"
+dependencies = [
+ "mjolnir-core",
  "tempfile",
 ]
 
@@ -412,6 +421,7 @@ dependencies = [
  "mjolnir-cli",
  "mjolnir-core",
  "mjolnir-image",
+ "mjolnir-media",
  "mjolnir-storage",
  "mjolnir-win32-ui",
  "windows",

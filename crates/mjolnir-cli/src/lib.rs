@@ -11,7 +11,7 @@
 
 #![warn(missing_docs)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use mjolnir_core::cancel::CancelToken;
@@ -98,6 +98,23 @@ pub enum Command {
         #[arg(long, default_value_t = true)]
         owned_only: bool,
     },
+
+    /// Build bootable recovery media from the Windows parts this computer has.
+    ///
+    /// Writes an ISO file. Nothing is downloaded, and no Microsoft file is
+    /// copied anywhere except onto the media being made.
+    RecoveryMedia {
+        /// Where to write the ISO.
+        #[arg(long)]
+        iso: PathBuf,
+        /// The folder holding MjolnirVSS.Restore.exe. Defaults to the folder
+        /// this program is running from.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
+
+    /// Report what recovery media could be built from, without building one.
+    RecoverySources,
 }
 
 /// Parses `args` and runs the command, returning the process exit code.
@@ -155,6 +172,10 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::List { path } => cmd_list(&cli, path.clone()),
         Command::DiagnoseBitlocker => cmd_diagnose_bitlocker(&cli, &cancel),
         Command::CleanupSnapshots { owned_only } => cmd_cleanup(&cli, *owned_only),
+        Command::RecoveryMedia { iso, from } => {
+            cmd_recovery_media(&cli, iso, from.as_deref(), progress.as_mut(), &cancel)
+        }
+        Command::RecoverySources => cmd_recovery_sources(&cli),
     };
 
     match result {
@@ -689,6 +710,125 @@ fn cmd_cleanup(cli: &Cli, owned_only: bool) -> Result<ExitCode> {
 #[cfg(not(windows))]
 fn cmd_cleanup(_cli: &Cli, _owned_only: bool) -> Result<ExitCode> {
     Err(not_windows())
+}
+
+/// The folder this program is running from, which is where the portable
+/// release keeps both executables next to each other.
+fn own_folder() -> Result<PathBuf> {
+    let exe = std::env::current_exe().map_err(|e| {
+        Error::new(
+            ExitCode::Failure,
+            "MjolnirVSS could not find its own folder",
+            e.to_string(),
+            "pass --from with the folder MjolnirVSS was extracted to",
+        )
+    })?;
+    Ok(exe
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(".")))
+}
+
+fn cmd_recovery_sources(cli: &Cli) -> Result<ExitCode> {
+    let sources = mjolnir_media::find_sources();
+    if cli.json {
+        let value = serde_json::json!({
+            "sources": sources.iter().map(|s| serde_json::json!({
+                "kind": s.kind.describe(),
+                "boot_image": s.boot_image.to_string_lossy(),
+                "can_make_iso": s.can_make_iso(),
+                "can_make_usb": s.can_make_usb(),
+            })).collect::<Vec<_>>(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+        return Ok(ExitCode::Success);
+    }
+
+    if sources.is_empty() {
+        println!("No Windows recovery components were found on this computer.");
+        println!("MjolnirVSS never ships or downloads them: Microsoft does not allow it.");
+        println!("Install the Windows ADK with the Windows PE add-on, or turn the recovery");
+        println!("environment back on with 'reagentc /enable'.");
+        return Ok(ExitCode::Unsupported);
+    }
+
+    println!("Recovery media could be built from:");
+    for source in &sources {
+        println!("  {}", source.kind.describe());
+        println!("    image: {}", source.boot_image.display());
+        println!(
+            "    can make an ISO: {}",
+            if source.can_make_iso() { "yes" } else { "no" }
+        );
+        println!(
+            "    can make a USB stick: {}",
+            if source.can_make_usb() { "yes" } else { "no" }
+        );
+        for limit in source.explain_limits() {
+            println!("    note: {limit}");
+        }
+    }
+    Ok(ExitCode::Success)
+}
+
+fn cmd_recovery_media(
+    cli: &Cli,
+    iso: &Path,
+    from: Option<&Path>,
+    progress: &mut dyn Progress,
+    cancel: &CancelToken,
+) -> Result<ExitCode> {
+    let release = match from {
+        Some(dir) => dir.to_path_buf(),
+        None => own_folder()?,
+    };
+    let payload = mjolnir_media::payload_from_release(&release)?;
+    let source = mjolnir_media::best_source()?;
+
+    if !cli.quiet && !cli.json {
+        eprintln!("Building recovery media from {}.", source.kind.describe());
+        eprintln!("Writing {}", iso.display());
+    }
+
+    let work = std::env::temp_dir();
+    let outcome = mjolnir_media::build_iso(&source, &payload, iso, &work, progress, cancel)?;
+    let report = mjolnir_media::check_iso(&outcome.path)?;
+
+    if cli.json {
+        let value = serde_json::json!({
+            "path": outcome.path.to_string_lossy(),
+            "size_bytes": outcome.size_bytes,
+            "source": outcome.source.describe(),
+            "verified": report.passed(),
+            "checks": report.checks.iter().map(|c| serde_json::json!({
+                "what": c.what, "passed": c.passed, "detail": c.detail,
+            })).collect::<Vec<_>>(),
+            "notes": outcome.notes,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+    } else {
+        println!(
+            "Recovery media written: {} ({})",
+            outcome.path.display(),
+            mjolnir_core::progress::format_bytes(outcome.size_bytes)
+        );
+        print!("{}", report.describe());
+        for note in &outcome.notes {
+            println!("{note}");
+        }
+    }
+
+    if report.passed() {
+        Ok(ExitCode::Success)
+    } else {
+        Ok(ExitCode::CorruptBackup)
+    }
 }
 
 /// The default backup folder name, `COMPUTERNAME_YYYY-MM-DD_HHMM`.

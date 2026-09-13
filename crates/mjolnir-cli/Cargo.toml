@@ -12,6 +12,7 @@ mjolnir-core = { workspace = true }
 mjolnir-image = { workspace = true }
 mjolnir-storage = { workspace = true }
 mjolnir-backup = { workspace = true }
+mjolnir-media = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 
