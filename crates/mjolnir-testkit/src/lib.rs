@@ -21,7 +21,9 @@ pub mod corrupt;
 pub mod disk;
 pub mod file_device;
 pub mod ntfs;
+pub mod ntfs_volume;
 
 pub use disk::{SyntheticDisk, SyntheticPartition};
 pub use file_device::FileBlockDevice;
 pub use ntfs::SyntheticNtfs;
+pub use ntfs_volume::{NtfsVolumeBuilder, PlannedFile};

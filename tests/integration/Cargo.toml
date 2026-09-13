@@ -22,6 +22,7 @@ mjolnir-storage = { workspace = true }
 mjolnir-backup = { workspace = true }
 mjolnir-restore = { workspace = true }
 mjolnir-ntfs = { workspace = true }
+mjolnir-files = { workspace = true }
 mjolnir-testkit = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
