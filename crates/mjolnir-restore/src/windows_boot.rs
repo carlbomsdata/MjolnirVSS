@@ -211,6 +211,66 @@ pub fn roles_in_order(roles: &[PartitionRole]) -> (Option<usize>, Option<usize>,
 /// Returns what was found, what was changed, and what was true afterwards.
 /// Repairing a disk that did not need it is not an error and changes nothing.
 #[cfg(windows)]
+/// Looks at a restored disk's boot configuration and reports what a repair
+/// would do, without changing anything.
+///
+/// Deliberately not the same code path as [`repair_disk`]. A dry run that
+/// shares its body with the function that writes is one edit away from not
+/// being dry, and this is a tool that rewrites the way a computer starts. The
+/// two are short enough to keep apart and read side by side.
+pub fn inspect_disk(disk_number: u32) -> Result<(BootRepairReport, BootDecision)> {
+    let mut report = BootRepairReport::default();
+
+    rescan_disk(disk_number)?;
+    let volumes = find_restored_volumes(disk_number)?;
+
+    let Some(windows_volume) = volumes.windows.clone() else {
+        report
+            .before
+            .push("No Windows volume was found on this disk.".to_owned());
+        return Ok((
+            report,
+            BootDecision::CannotRepair {
+                reason: "there is no Windows volume on this disk".to_owned(),
+            },
+        ));
+    };
+    let Some(efi_volume) = volumes.efi.clone() else {
+        report
+            .before
+            .push("No EFI system partition was found on this disk.".to_owned());
+        return Ok((
+            report,
+            BootDecision::CannotRepair {
+                reason: "there is no EFI system partition on this disk".to_owned(),
+            },
+        ));
+    };
+
+    let windows_letter = BorrowedLetter::assign(&windows_volume, &[])?;
+    let efi_letter = BorrowedLetter::assign(&efi_volume, &[windows_letter.letter])?;
+    let recovery_letter = match &volumes.recovery {
+        Some(volume) => {
+            BorrowedLetter::assign(volume, &[windows_letter.letter, efi_letter.letter]).ok()
+        }
+        None => None,
+    };
+
+    let windows_root = windows_letter.root();
+    let state = inspect(
+        &windows_root,
+        &efi_letter.root(),
+        recovery_letter
+            .as_ref()
+            .map(BorrowedLetter::root)
+            .as_deref(),
+    );
+    report.before = state.describe();
+    let decision = decide(&state);
+    report.succeeded = !matches!(decision, BootDecision::CannotRepair { .. });
+    Ok((report, decision))
+}
+
 pub fn repair_disk(disk_number: u32) -> Result<BootRepairReport> {
     let mut report = BootRepairReport::default();
 
@@ -353,12 +413,22 @@ pub fn repair_disk(disk_number: u32) -> Result<BootRepairReport> {
 /// Not available away from Windows.
 #[cfg(not(windows))]
 pub fn repair_disk(_disk_number: u32) -> Result<BootRepairReport> {
-    Err(Error::new(
+    Err(not_windows())
+}
+
+#[cfg(not(windows))]
+pub fn inspect_disk(_disk_number: u32) -> Result<(BootRepairReport, BootDecision)> {
+    Err(not_windows())
+}
+
+#[cfg(not(windows))]
+fn not_windows() -> Error {
+    Error::new(
         ExitCode::Unsupported,
         "boot repair needs Windows",
         "this build was not made for Windows",
         "run the recovery application from Windows PE",
-    ))
+    )
 }
 
 #[cfg(test)]

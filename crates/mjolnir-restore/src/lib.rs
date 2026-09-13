@@ -31,5 +31,5 @@ pub use run::{
 pub use target::{check_target, EraseConfirmation, TargetDisk};
 
 #[cfg(windows)]
-pub use windows_boot::{repair_disk, RestoredVolumes};
+pub use windows_boot::{inspect_disk, repair_disk, RestoredVolumes};
 pub use windows_target::{describe_target, enumerate_targets, WritableDisk};

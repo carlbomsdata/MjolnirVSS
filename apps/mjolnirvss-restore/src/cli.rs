@@ -51,6 +51,21 @@ pub enum Command {
     /// List the disks on this computer.
     ListDisks,
 
+    /// Repair the boot configuration of an already restored disk.
+    ///
+    /// For a disk that holds a restored Windows which will not start. It
+    /// rewrites the boot files on that disk's EFI system partition and changes
+    /// nothing else: no partition is touched and no file of yours is read.
+    RepairBoot {
+        /// The disk number, as `list-disks` reports it.
+        #[arg(long)]
+        disk: u32,
+
+        /// Report what would be done and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Restore a backup onto a disk.
     ///
     /// Without `--dry-run` this erases the target disk.
@@ -107,6 +122,7 @@ fn run(cli: Cli) -> ExitCode {
         Command::InspectBackup { path } => cmd_inspect_backup(&cli, path.clone()),
         Command::FindBackups => cmd_find_backups(&cli),
         Command::ListDisks => cmd_list_disks(&cli),
+        Command::RepairBoot { disk, dry_run } => cmd_repair_boot(&cli, *disk, *dry_run),
         Command::Restore {
             path,
             target,
@@ -255,6 +271,67 @@ fn cmd_find_backups(cli: &Cli) -> Result<ExitCode> {
         println!("    {}", f.describe());
     }
     Ok(ExitCode::Success)
+}
+
+#[cfg(windows)]
+fn cmd_repair_boot(cli: &Cli, disk: u32, dry_run: bool) -> Result<ExitCode> {
+    if dry_run {
+        let (report, decision) = mjolnir_restore::inspect_disk(disk)?;
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "disk": disk,
+                    "dry_run": true,
+                    "before": report.before,
+                    "would_change": decision.writes_anything(),
+                    "decision": format!("{decision:?}"),
+                }))
+                .unwrap_or_default()
+            );
+        } else {
+            println!("Boot configuration of disk {disk}:");
+            for line in &report.before {
+                println!("  {line}");
+            }
+            println!();
+            if decision.writes_anything() {
+                println!("A repair would rewrite the boot files on this disk.");
+            } else {
+                println!("Nothing would be changed.");
+            }
+            println!("Nothing was changed: this was a dry run.");
+        }
+        return Ok(ExitCode::Success);
+    }
+
+    let report = mjolnir_restore::repair_disk(disk)?;
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "disk": disk,
+                "succeeded": report.succeeded,
+                "changed_anything": report.changed_anything(),
+                "before": report.before,
+                "changed": report.changed,
+                "notes": report.notes,
+            }))
+            .unwrap_or_default()
+        );
+    } else {
+        println!("{}", report.describe());
+    }
+    if report.succeeded {
+        Ok(ExitCode::Success)
+    } else {
+        Ok(ExitCode::Failure)
+    }
+}
+
+#[cfg(not(windows))]
+fn cmd_repair_boot(_cli: &Cli, _disk: u32, _dry_run: bool) -> Result<ExitCode> {
+    Err(not_windows())
 }
 
 #[cfg(windows)]
@@ -485,6 +562,48 @@ fn not_windows() -> Error {
 
 #[cfg(test)]
 mod tests {
+
+    /// The command that rewrites how a computer starts has to be reachable on
+    /// its own, for a disk that was restored earlier and will not boot.
+    #[test]
+    fn repair_boot_parses() {
+        let cli = Cli::try_parse_from(["MjolnirVSS.Restore.exe", "repair-boot", "--disk", "0"])
+            .expect("repair-boot should parse");
+        match cli.command {
+            Command::RepairBoot { disk, dry_run } => {
+                assert_eq!(disk, 0);
+                assert!(!dry_run, "it writes unless a dry run is asked for");
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    /// And it has to be possible to look without touching.
+    #[test]
+    fn repair_boot_has_a_dry_run() {
+        let cli = Cli::try_parse_from([
+            "MjolnirVSS.Restore.exe",
+            "repair-boot",
+            "--disk",
+            "2",
+            "--dry-run",
+        ])
+        .expect("a dry run should parse");
+        match cli.command {
+            Command::RepairBoot { disk, dry_run } => {
+                assert_eq!(disk, 2);
+                assert!(dry_run);
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    /// A disk number is not optional: there is no sensible default for which
+    /// disk to rewrite the boot configuration of.
+    #[test]
+    fn repair_boot_requires_a_disk() {
+        assert!(Cli::try_parse_from(["MjolnirVSS.Restore.exe", "repair-boot"]).is_err());
+    }
     use super::*;
     use clap::CommandFactory;
 
