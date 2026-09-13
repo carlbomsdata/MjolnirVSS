@@ -127,6 +127,30 @@ impl Step {
 #[cfg(test)]
 mod focus_tests {
 
+    /// The text mangled itself once already, through escaping in the wrong
+    /// layer, and reached a real screen looking broken. It is built from parts
+    /// now, and this checks the parts arrive whole.
+    #[test]
+    fn the_password_step_text_is_not_mangled() {
+        let t = super::password_step_text();
+        assert!(t.contains("This backup is encrypted."), "{t}");
+        assert!(
+            t.contains("MjolnirVSS did not store the password and cannot recover it."),
+            "a sentence was broken up: {t}"
+        );
+        assert!(
+            t.contains("getting it wrong here costs nothing."),
+            "a sentence was broken up: {t}"
+        );
+        // No run of spaces: that is what the broken version looked like.
+        assert!(
+            !t.contains("   "),
+            "stray indentation got into the text: {t}"
+        );
+        // Paragraphs separated by a blank line, not by a bare newline.
+        assert_eq!(t.matches(&super::paragraph_break()).count(), 2, "{t}");
+    }
+
     /// An encrypted backup is asked about **before** a disk is chosen, so a
     /// wrong password costs nothing. Asking after the target was picked would
     /// mean asking after it had been erased.
@@ -319,6 +343,35 @@ pub struct RecoveryWindow {
     finished: Option<std::result::Result<RestoreOutcome, Error>>,
 }
 
+/// A blank line between paragraphs, as the text control wants it.
+///
+/// Built from character codes rather than written as an escape, because these
+/// strings have been mangled once already by escaping in the wrong layer, and
+/// the result reached a screen before anybody noticed.
+fn paragraph_break() -> String {
+    let mut s = String::new();
+    for code in [13u8, 10, 13, 10] {
+        s.push(char::from(code));
+    }
+    s
+}
+
+/// What the password step says.
+fn password_step_text() -> String {
+    let gap = paragraph_break();
+    let mut t = String::new();
+    t.push_str("This backup is encrypted. Nothing can be read out of it without the password.");
+    t.push_str(&gap);
+    t.push_str(
+        "MjolnirVSS did not store the password and cannot recover it. If it has been lost, this backup cannot be used.",
+    );
+    t.push_str(&gap);
+    t.push_str(
+        "The password is checked before anything is written, so getting it wrong here costs nothing.",
+    );
+    t
+}
+
 /// Every step, so a test can walk all of them and none is forgotten.
 #[cfg(test)]
 const ALL_STEPS: [Step; 7] = [
@@ -508,14 +561,7 @@ impl RecoveryWindow {
 
     fn enter_password(&mut self) {
         sys::set_text(self.controls.next, "Unlock");
-        sys::set_text(
-            self.controls.body,
-            "This backup is encrypted. Nothing can be read out of it without the password.
-
-             MjolnirVSS did not store the password and cannot recover it. If it has been lost,              this backup cannot be used.
-
-             The password is checked before anything is written, so getting it wrong here costs              nothing.",
-        );
+        sys::set_text(self.controls.body, &password_step_text());
         sys::set_text(self.controls.confirm_label, "Password:");
         sys::set_text(self.controls.password_edit, "");
         // Nothing to unlock with until something is typed.
