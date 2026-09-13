@@ -279,15 +279,28 @@ command prompt.
 It works from the keyboard alone - Tab, arrows and Enter - which matters in
 Windows PE on a machine whose mouse may not be the thing that still works.
 
-Before it erases anything the recovery program shows you the disk number, model,
-serial number, size and every partition currently on it, and requires you to type
+![Choosing the disk to restore onto. The drive holding the backup is marked and cannot be chosen](docs/images/recovery-choose-disk.png)
+
+**The drive holding the backup cannot be chosen.** Erasing it halfway through a
+restore would leave a computer with neither a working system nor anything to
+recover from, so it is refused rather than warned about.
+
+![The review step: what will be restored, onto which disk, and the phrase that has to be typed](docs/images/recovery-confirm-erase.png)
+
+Before anything is erased you are shown the disk number, model, serial number,
+size and every partition currently on it, and you have to type
 
 ```text
 ERASE <the disk's serial number>
 ```
 
-exactly. It will not accept `y`. It refuses to erase the drive holding the
-backup, and it refuses a disk too small to hold the layout.
+exactly. It will not accept `y`. Then it asks once more, naming the disk.
+
+![The finished step: 28.5 GiB written, four partitions restored](docs/images/recovery-finished.png)
+
+It also refuses a disk too small to hold the layout, checks every stored block is
+present **before** it erases anything, and stops if the disk changed size between
+being checked and being written.
 
 Full walkthrough: [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md).
 
