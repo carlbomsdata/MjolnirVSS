@@ -351,3 +351,62 @@ mod tests {
         assert!(text.contains("NVMe"));
     }
 }
+
+#[cfg(test)]
+mod blank_disk_tests {
+    use super::*;
+    use mjolnir_image::disk_layout::{BusType, DiskEntry, PartitionStyle};
+
+    fn source_disk(size: u64) -> DiskEntry {
+        DiskEntry {
+            id: mjolnir_core::ids::DiskId::new("disk-0").unwrap(),
+            disk_number: 0,
+            size_bytes: size,
+            logical_sector_size: 512,
+            physical_sector_size: 4096,
+            partition_style: PartitionStyle::Gpt,
+            disk_guid: "{00000000-0000-0000-0000-000000000001}".to_owned(),
+            model: Some("Source".to_owned()),
+            serial: Some("SRC1".to_owned()),
+            bus_type: BusType::Nvme,
+            partitions: Vec::new(),
+        }
+    }
+
+    fn blank_target(size: u64) -> TargetDisk {
+        TargetDisk {
+            number: 1,
+            device_path: r"\\.\PhysicalDrive1".to_owned(),
+            size_bytes: size,
+            logical_sector_size: 512,
+            model: Some("Blank Replacement".to_owned()),
+            serial: Some("REPL0001".to_owned()),
+            bus: "NVMe".to_owned(),
+            // A disk straight out of its packaging has no partition table at
+            // all, which is the whole point of it.
+            existing_partitions: Vec::new(),
+            holds_the_backup: false,
+        }
+    }
+
+    /// The disk somebody has just fitted to replace a failed one has nothing on
+    /// it, and that must not stop it being restored onto. It was once missing
+    /// from the list entirely, because Windows will not describe the layout of
+    /// an uninitialised disk and that was treated as the disk not existing.
+    #[test]
+    fn a_blank_disk_with_no_partition_table_is_a_valid_target() {
+        let size = 64 * 1024 * 1024 * 1024;
+        let target = blank_target(size);
+        assert!(target.existing_partitions.is_empty());
+        check_target(&source_disk(size), &target, size).expect("a blank disk is the normal target");
+    }
+
+    /// And it still has to be confirmed, by its own serial, like any other.
+    #[test]
+    fn a_blank_disk_still_has_to_be_confirmed_before_it_is_erased() {
+        let target = blank_target(64 * 1024 * 1024 * 1024);
+        assert_eq!(target.erase_phrase(), "ERASE REPL0001");
+        assert!(EraseConfirmation::check(&target, "yes").is_err());
+        assert!(EraseConfirmation::check(&target, "ERASE REPL0001").is_ok());
+    }
+}

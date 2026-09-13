@@ -131,7 +131,14 @@ pub fn describe_disk(number: u32) -> Result<PhysicalDisk> {
     let (size_bytes, geometry_sector) = read_geometry(&device)?;
     let (logical_sector_size, physical_sector_size) = read_alignment(&device, geometry_sector);
     let (model, serial, bus_type, raw_bus_type, removable) = read_device_descriptor(&device);
-    let (partition_style, disk_guid, partitions) = read_layout(&device, logical_sector_size)?;
+    // A disk with no partition table on it still answers for its size, and it
+    // is the most important disk there is to a recovery tool: the blank one
+    // just fitted to replace a failed drive. Windows refuses to describe the
+    // layout of an uninitialised or offline disk, and treating that as "this
+    // disk does not exist" left the one disk somebody wants to restore onto
+    // missing from the list. Found by restoring onto a blank disk in Windows PE.
+    let (partition_style, disk_guid, partitions) = read_layout(&device, logical_sector_size)
+        .unwrap_or((PartitionStyle::Raw, None, Vec::new()));
 
     Ok(PhysicalDisk {
         number,
