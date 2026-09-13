@@ -29,10 +29,10 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, CreateWindowExW, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
     SystemParametersInfoW, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, DLGC_STATIC, ES_AUTOHSCROLL, ES_LEFT,
-    ES_MULTILINE, ES_READONLY, GWLP_WNDPROC, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDLGCODE, WM_SETFOCUS,
-    WM_SETFONT, WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE,
-    WS_VSCROLL,
+    ES_MULTILINE, ES_PASSWORD, ES_READONLY, GWLP_WNDPROC, HMENU, NONCLIENTMETRICSW,
+    SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_GETDLGCODE, WM_SETFOCUS, WM_SETFONT, WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE,
+    WS_GROUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 
 /// Reference device independent pixels per inch.
@@ -196,6 +196,8 @@ pub enum ControlKind {
     Label,
     /// A single line text box.
     TextBox,
+    /// A single line text box that shows dots instead of what is typed.
+    PasswordBox,
     /// A multi line, read only text box with a scroll bar.
     TextArea,
     /// A progress bar.
@@ -209,7 +211,9 @@ impl ControlKind {
         match self {
             ControlKind::Button | ControlKind::DefaultButton => w!("BUTTON"),
             ControlKind::Label => w!("STATIC"),
-            ControlKind::TextBox | ControlKind::TextArea => w!("EDIT"),
+            ControlKind::TextBox | ControlKind::PasswordBox | ControlKind::TextArea => {
+                w!("EDIT")
+            }
             ControlKind::ProgressBar => w!("msctls_progress32"),
             ControlKind::ListBox => w!("LISTBOX"),
         }
@@ -225,6 +229,11 @@ impl ControlKind {
             ControlKind::Label => base | WINDOW_STYLE(SS_LEFT.0),
             ControlKind::TextBox => {
                 base | WS_TABSTOP | WINDOW_STYLE((ES_LEFT | ES_AUTOHSCROLL) as u32)
+            }
+            // ES_PASSWORD is what stops the characters appearing on screen.
+            // Somebody restoring a machine is often not alone in the room.
+            ControlKind::PasswordBox => {
+                base | WS_TABSTOP | WINDOW_STYLE((ES_LEFT | ES_AUTOHSCROLL | ES_PASSWORD) as u32)
             }
             // Read only, and deliberately not a tab stop. It is output, not a
             // control: a multiline edit tells Windows it wants the Return key,
@@ -248,7 +257,10 @@ impl ControlKind {
 
     fn ex_style(self) -> WINDOW_EX_STYLE {
         match self {
-            ControlKind::TextBox | ControlKind::TextArea | ControlKind::ListBox => WS_EX_CLIENTEDGE,
+            ControlKind::TextBox
+            | ControlKind::PasswordBox
+            | ControlKind::TextArea
+            | ControlKind::ListBox => WS_EX_CLIENTEDGE,
             _ => WINDOW_EX_STYLE(0),
         }
     }
@@ -627,6 +639,7 @@ mod tests {
             ControlKind::Button,
             ControlKind::DefaultButton,
             ControlKind::TextBox,
+            ControlKind::PasswordBox,
             ControlKind::ListBox,
         ] {
             assert_ne!(

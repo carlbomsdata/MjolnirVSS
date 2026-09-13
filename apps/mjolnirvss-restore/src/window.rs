@@ -45,6 +45,7 @@ const ID_PROGRESS: i32 = 2007;
 const ID_STAGE: i32 = 2008;
 const ID_REFRESH: i32 = 2009;
 const ID_EXIT: i32 = 2010;
+const ID_PASSWORD_EDIT: i32 = 2011;
 
 const TIMER_PROGRESS: usize = 1;
 const TIMER_INTERVAL: u32 = 200;
@@ -59,6 +60,8 @@ enum Focus {
     List,
     /// The box the erase phrase is typed into.
     Confirmation,
+    /// The box a password is typed into.
+    Password,
     /// The button that goes on.
     NextButton,
 }
@@ -67,6 +70,8 @@ enum Focus {
 enum Step {
     FindBackup,
     SelectBackup,
+    /// Shown only for an encrypted backup.
+    Password,
     SelectTarget,
     Review,
     Restoring,
@@ -78,6 +83,7 @@ impl Step {
         match self {
             Step::FindBackup => "Step 1 of 5:  Find a backup",
             Step::SelectBackup => "Step 2 of 5:  Choose the backup to restore",
+            Step::Password => "Step 2 of 5:  This backup is encrypted",
             Step::SelectTarget => "Step 3 of 5:  Choose the disk to restore onto",
             Step::Review => "Step 4 of 5:  Check this carefully",
             Step::Restoring => "Step 5 of 5:  Restoring",
@@ -93,7 +99,7 @@ impl Step {
     fn buttons(self) -> &'static [ButtonSlot] {
         match self {
             Step::FindBackup => &[ButtonSlot::Exit, ButtonSlot::Refresh, ButtonSlot::Next],
-            Step::SelectBackup | Step::SelectTarget | Step::Review => {
+            Step::SelectBackup | Step::Password | Step::SelectTarget | Step::Review => {
                 &[ButtonSlot::Exit, ButtonSlot::Back, ButtonSlot::Next]
             }
             Step::Restoring => &[ButtonSlot::Exit],
@@ -111,6 +117,7 @@ impl Step {
     fn focus(self) -> Focus {
         match self {
             Step::SelectBackup | Step::SelectTarget => Focus::List,
+            Step::Password => Focus::Password,
             Step::Review => Focus::Confirmation,
             Step::FindBackup | Step::Restoring | Step::Completed => Focus::NextButton,
         }
@@ -120,22 +127,42 @@ impl Step {
 #[cfg(test)]
 mod focus_tests {
 
-    /// An encrypted backup cannot be restored from this window yet, so the
-    /// message has to say where it *can* be done. Telling somebody "no" without
-    /// telling them how is how a recovery tool loses the one user it has.
+    /// An encrypted backup is asked about **before** a disk is chosen, so a
+    /// wrong password costs nothing. Asking after the target was picked would
+    /// mean asking after it had been erased.
     #[test]
-    fn the_encrypted_backup_message_says_what_to_do_instead() {
-        let m = super::encrypted_backup_message();
-        assert!(m.contains("encrypted"), "{m}");
-        assert!(m.contains("command prompt"), "{m}");
-        assert!(
-            m.contains(super::RECOVERY_EXE_PATH),
-            "it must name the program to run: {m}"
-        );
-        assert!(m.contains("restore"), "{m}");
-        assert!(m.contains("list-disks"), "and how to find the disk: {m}");
+    fn the_password_is_asked_for_before_a_disk_is_chosen() {
+        let order = super::ALL_STEPS;
+        let password = order.iter().position(|s| *s == Step::Password).unwrap();
+        let target = order.iter().position(|s| *s == Step::SelectTarget).unwrap();
+        let review = order.iter().position(|s| *s == Step::Review).unwrap();
+        assert!(password < target, "the password comes before the disk");
+        assert!(password < review, "and well before anything is erased");
     }
-    use super::{button_row, Focus, Step};
+
+    /// The password box, not the erase phrase box: one has to be hidden as it
+    /// is typed and the other has to be readable.
+    #[test]
+    fn the_password_step_focuses_the_password_box() {
+        assert_eq!(Step::Password.focus(), Focus::Password);
+        assert_ne!(
+            Step::Password.focus(),
+            Focus::Confirmation,
+            "a password must not be typed into the box that shows what is typed"
+        );
+    }
+
+    /// Going back from the password step has to be possible: somebody may have
+    /// chosen the wrong backup.
+    #[test]
+    fn the_password_step_offers_a_way_back() {
+        let buttons = Step::Password.buttons();
+        assert!(buttons.contains(&ButtonSlot::Back), "{buttons:?}");
+        assert!(buttons.contains(&ButtonSlot::Next), "{buttons:?}");
+        assert!(buttons.contains(&ButtonSlot::Exit), "{buttons:?}");
+    }
+
+    use super::{button_row, ButtonSlot, Focus, Step};
 
     /// No two buttons a step shows may share a pixel. One drawn over another
     /// leaves a control that cannot be read but can still be tabbed to and
@@ -217,6 +244,10 @@ struct Controls {
     list: HWND,
     confirm_label: HWND,
     confirm_edit: HWND,
+    /// Where a password is typed. Separate from `confirm_edit` because the
+    /// erase phrase has to be readable as it is typed and a password must not
+    /// be.
+    password_edit: HWND,
     progress: HWND,
     stage: HWND,
     refresh: HWND,
@@ -226,13 +257,14 @@ struct Controls {
 }
 
 impl Controls {
-    fn all(&self) -> [HWND; 11] {
+    fn all(&self) -> [HWND; 12] {
         [
             self.title,
             self.body,
             self.list,
             self.confirm_label,
             self.confirm_edit,
+            self.password_edit,
             self.progress,
             self.stage,
             self.refresh,
@@ -255,6 +287,10 @@ impl Controls {
             });
         }
         match step {
+            Step::Password => {
+                v.push(self.confirm_label);
+                v.push(self.password_edit);
+            }
             Step::SelectBackup | Step::SelectTarget => v.push(self.list),
             Step::Review => {
                 v.push(self.confirm_label);
@@ -283,30 +319,12 @@ pub struct RecoveryWindow {
     finished: Option<std::result::Result<RestoreOutcome, Error>>,
 }
 
-/// What to tell somebody who chose an encrypted backup in the window.
-///
-/// Built as one function so the path in it is written once and can be tested.
-fn encrypted_backup_message() -> String {
-    let mut m = String::new();
-    m.push_str("That backup is encrypted, and this window cannot ask for a password yet.");
-    m.push_str("\n\n");
-    m.push_str("Restore it from the command prompt behind this window:");
-    m.push_str("\n\n  ");
-    m.push_str(RECOVERY_EXE_PATH);
-    m.push_str(" restore <backup folder> --target <disk>");
-    m.push_str("\n\n");
-    m.push_str("It asks for the password. Run list-disks first to see the disks.");
-    m
-}
-
-/// Where the recovery application lives on its own media.
-const RECOVERY_EXE_PATH: &str = r"X:\MjolnirVSS\MjolnirVSS.Restore.exe";
-
 /// Every step, so a test can walk all of them and none is forgotten.
 #[cfg(test)]
-const ALL_STEPS: [Step; 6] = [
+const ALL_STEPS: [Step; 7] = [
     Step::FindBackup,
     Step::SelectBackup,
+    Step::Password,
     Step::SelectTarget,
     Step::Review,
     Step::Restoring,
@@ -388,6 +406,7 @@ impl RecoveryWindow {
         c.list = sys::create_control(h, ControlKind::ListBox, "", ID_LIST, f);
         c.confirm_label = sys::create_control(h, ControlKind::Label, "", ID_CONFIRM_LABEL, f);
         c.confirm_edit = sys::create_control(h, ControlKind::TextBox, "", ID_CONFIRM_EDIT, f);
+        c.password_edit = sys::create_control(h, ControlKind::PasswordBox, "", ID_PASSWORD_EDIT, f);
         c.progress = sys::create_control(h, ControlKind::ProgressBar, "", ID_PROGRESS, f);
         c.stage = sys::create_control(h, ControlKind::Label, "", ID_STAGE, f);
         c.refresh = sys::create_control(h, ControlKind::Button, "Search again", ID_REFRESH, f);
@@ -408,6 +427,7 @@ impl RecoveryWindow {
         match step {
             Step::FindBackup => self.enter_find(),
             Step::SelectBackup => self.enter_select_backup(),
+            Step::Password => self.enter_password(),
             Step::SelectTarget => self.enter_select_target(),
             Step::Review => self.enter_review(window),
             Step::Restoring => {}
@@ -430,6 +450,7 @@ impl RecoveryWindow {
         let target = match step.focus() {
             Focus::List => self.controls.list,
             Focus::Confirmation => self.controls.confirm_edit,
+            Focus::Password => self.controls.password_edit,
             Focus::NextButton => self.controls.next,
         };
         window.focus(target);
@@ -483,6 +504,49 @@ impl RecoveryWindow {
              when it was taken and cannot be used.",
         );
         sys::enable(self.controls.next, false);
+    }
+
+    fn enter_password(&mut self) {
+        sys::set_text(self.controls.next, "Unlock");
+        sys::set_text(
+            self.controls.body,
+            "This backup is encrypted. Nothing can be read out of it without the password.
+
+             MjolnirVSS did not store the password and cannot recover it. If it has been lost,              this backup cannot be used.
+
+             The password is checked before anything is written, so getting it wrong here costs              nothing.",
+        );
+        sys::set_text(self.controls.confirm_label, "Password:");
+        sys::set_text(self.controls.password_edit, "");
+        // Nothing to unlock with until something is typed.
+        sys::enable(self.controls.next, false);
+    }
+
+    /// Tries the typed password, and stays on this step if it is wrong.
+    fn try_unlock(&mut self, window: &Window) {
+        let Some(index) = self.chosen_backup else {
+            return;
+        };
+        let typed = self.read_text(window, self.controls.password_edit);
+        if typed.is_empty() {
+            return;
+        }
+
+        match self.found[index].set.unlock(&typed) {
+            Ok(()) => {
+                // The typed password is wiped from the box as soon as it has
+                // been used: there is no reason for it to sit on screen, or in
+                // a control, for the rest of the restore.
+                sys::set_text(self.controls.password_edit, "");
+                self.show_step(window, Step::SelectTarget);
+            }
+            Err(e) => {
+                message_box::error_for(window.raw(), "MjolnirVSS Recovery", &e);
+                sys::set_text(self.controls.password_edit, "");
+                sys::enable(self.controls.next, false);
+                window.focus(self.controls.password_edit);
+            }
+        }
     }
 
     fn enter_select_target(&mut self) {
@@ -733,20 +797,17 @@ impl RecoveryWindow {
                     );
                     return;
                 }
-                // This window cannot ask for a password yet. Saying so here is
-                // the difference between a limitation and a betrayal: the
-                // alternative is erasing the target disk and only then finding
-                // out that the backup cannot be opened.
-                if self.found[index].set.is_encrypted() {
-                    message_box::warn(
-                        window.raw(),
-                        "MjolnirVSS Recovery",
-                        &encrypted_backup_message(),
-                    );
+                // An encrypted backup needs a password before anything can be
+                // read out of it, and asking now means a wrong one costs
+                // nothing. Asking later would mean asking after the target disk
+                // had already been erased.
+                if self.found[index].set.is_encrypted() && !self.found[index].set.is_unlocked() {
+                    self.show_step(window, Step::Password);
                     return;
                 }
                 self.show_step(window, Step::SelectTarget);
             }
+            Step::Password => self.try_unlock(window),
             Step::SelectTarget => {
                 let Some(index) = self.chosen_target else {
                     return;
@@ -825,6 +886,15 @@ impl RecoveryWindow {
                 y += body_height + s(10);
                 let list_height = (bottom - y - s(12)).max(s(80));
                 sys::place(c.list, sys::rect(x, y, inner, list_height));
+            }
+            Step::Password => {
+                let block = s(LINE) + s(30) + s(10);
+                let body_height = (bottom - y - block - s(20)).max(s(80));
+                sys::place(c.body, sys::rect(x, y, inner, body_height));
+                y += body_height + s(10);
+                sys::place(c.confirm_label, sys::rect(x, y, inner, s(LINE)));
+                y += s(LINE) + s(4);
+                sys::place(c.password_edit, sys::rect(x, y, s(300), s(26)));
             }
             Step::Review => {
                 let confirm_block = s(LINE) + s(30) + s(10);
@@ -917,6 +987,12 @@ impl WindowHandler for RecoveryWindow {
             (ID_EXIT, _) => window.request_close(),
             (ID_LIST, LBN_SELCHANGE) => self.on_list_changed(),
             (ID_CONFIRM_EDIT, EN_CHANGE) => self.check_confirmation(window),
+            (ID_PASSWORD_EDIT, EN_CHANGE) => {
+                // Something typed is enough to try; whether it is right is the
+                // backup's answer to give, not this window's guess.
+                let typed = self.read_text(window, self.controls.password_edit);
+                sys::enable(self.controls.next, !typed.is_empty());
+            }
             _ => {}
         }
     }
@@ -965,6 +1041,7 @@ mod tests {
             ID_NEXT,
             ID_CONFIRM_LABEL,
             ID_CONFIRM_EDIT,
+            ID_PASSWORD_EDIT,
             ID_PROGRESS,
             ID_STAGE,
             ID_REFRESH,
