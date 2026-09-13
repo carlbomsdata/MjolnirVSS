@@ -82,6 +82,19 @@ if (-not (Test-Path -LiteralPath $RecoveryIso)) {
 }
 Write-LabStep "recovery media: $RecoveryIso"
 
+# The payload disc rides along in a second drive. After the restore, the machine
+# boots the Windows that was just written, and that Windows needs the phase
+# script that checks it. Putting the disc in now means the machine never has to
+# be opened up again between the restore and the check.
+$payloadIso = Join-Path (Join-Path $lab 'media') 'mjolnir-payload.iso'
+$discs = @($RecoveryIso)
+if (Test-Path -LiteralPath $payloadIso) {
+    $discs += $payloadIso
+    Write-LabStep "payload disc:   $payloadIso"
+} else {
+    Write-LabStep 'no payload disc; build one with new-payload.ps1 before checking the restored machine'
+}
+
 # ---- an existing machine ---------------------------------------------------
 
 if (Test-Path -LiteralPath $vmxPath) {
@@ -133,7 +146,7 @@ $vmxPath = New-LabVmx `
     -MemoryMB $MemoryMB `
     -Cpus $Cpus `
     -Disks @($target, $backupDisk) `
-    -IsoPaths @($RecoveryIso) `
+    -IsoPaths $discs `
     -SecureBoot `
     -SerialLog $serialLog `
     -VncPort $VncPort
