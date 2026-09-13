@@ -24,8 +24,10 @@ pub mod bitmap;
 pub mod boot;
 pub mod record;
 pub mod runs;
+pub mod volume;
 
 pub use bitmap::{plan_used_blocks, Allocation, AllocationScan, BitmapPage, UsedBlockPlan};
 pub use boot::{NtfsBootSector, VolumeSignature};
 pub use record::{Attribute, FileName, FileRecord, MftReference};
 pub use runs::{DataRun, RunList};
+pub use volume::{FileIndex, IndexEntry, Volume};
