@@ -1352,14 +1352,17 @@ impl BackupWindow {
                     },
                 );
                 let mut body = format!("{}\r\n", outcome.summary());
-                let mut shown = 0;
-                for file in &outcome.files {
-                    if shown >= 60 {
-                        body.push_str("\r\n...and more; see the details view.");
-                        break;
-                    }
+                // Sixty lines is as much as the box shows before it becomes a
+                // wall of text. The rest is counted rather than listed.
+                const SHOW_AT_MOST: usize = 60;
+                for file in outcome.files.iter().take(SHOW_AT_MOST) {
                     body.push_str(&format!("\r\n{}", file.describe()));
-                    shown += 1;
+                }
+                if outcome.files.len() > SHOW_AT_MOST {
+                    body.push_str(&format!(
+                        "\r\n...and {} more.",
+                        outcome.files.len() - SHOW_AT_MOST
+                    ));
                 }
                 sys::set_text(self.controls.result_body, &body);
                 sys::enable(self.controls.open_folder, false);
