@@ -273,10 +273,10 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
 
         let encrypted_at_rest = encryption.encryption == Encryption::BitLockerUnlocked;
         if encrypted_at_rest {
-            warnings.push(format!(
-                "Partition {} ({}) is protected by BitLocker. It is unlocked, so the backup will contain a readable copy of it. The backup itself is not encrypted.",
+            warnings.push(bitlocker_note(
                 partition.number,
-                role.describe()
+                role.describe(),
+                request.encryption.is_some(),
             ));
         }
 
@@ -598,8 +598,59 @@ fn internal(e: impl std::fmt::Display) -> Error {
     )
 }
 
+/// What to say about a BitLocker volume being captured.
+///
+/// The second sentence depends on what is actually being done. Telling somebody
+/// "the backup itself is not encrypted" when they asked for encryption is worse
+/// than saying nothing: it is a false statement about their protection, made at
+/// the moment they care about it most. This was wrong for exactly as long as
+/// encryption existed without anybody re-reading this sentence.
+fn bitlocker_note(partition_number: u32, role: &str, backup_is_encrypted: bool) -> String {
+    let and_the_backup = if backup_is_encrypted {
+        "This backup is being encrypted with the password you gave, so what is written to the destination is sealed as well."
+    } else {
+        "The backup itself is not encrypted; pass --encrypt if you want it to be."
+    };
+    format!(
+        "Partition {partition_number} ({role}) is protected by BitLocker. It is unlocked, so the backup will contain a readable copy of it. {and_the_backup}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A BitLocker volume backed up without encryption has to say so.
+    #[test]
+    fn an_unencrypted_backup_of_a_bitlocker_volume_says_it_is_not_encrypted() {
+        let note = bitlocker_note(3, "C: Windows", false);
+        assert!(note.contains("readable copy"), "{note}");
+        assert!(note.contains("not encrypted"), "{note}");
+        assert!(note.contains("--encrypt"), "it should say how: {note}");
+    }
+
+    /// And one that *is* encrypted must not repeat the opposite. This sentence
+    /// was false for every encrypted backup until running one showed it.
+    #[test]
+    fn an_encrypted_backup_of_a_bitlocker_volume_does_not_claim_otherwise() {
+        let note = bitlocker_note(3, "C: Windows", true);
+        assert!(note.contains("readable copy"), "{note}");
+        assert!(
+            !note.contains("not encrypted"),
+            "an encrypted backup must never be described as unencrypted: {note}"
+        );
+        assert!(note.contains("sealed"), "{note}");
+    }
+
+    /// Whatever else changes, the thing that is always true stays said: what is
+    /// captured from an unlocked BitLocker volume is readable.
+    #[test]
+    fn both_notes_say_the_captured_data_is_readable() {
+        for encrypted in [true, false] {
+            let note = bitlocker_note(1, "C: Windows", encrypted);
+            assert!(note.contains("BitLocker"), "{note}");
+            assert!(note.contains("readable copy"), "{note}");
+        }
+    }
     use super::*;
     use mjolnir_image::disk_layout::BusType;
     use mjolnir_storage::volumes::VolumeExtent;

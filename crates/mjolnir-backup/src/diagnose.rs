@@ -219,9 +219,14 @@ impl Diagnosis {
             // makes the text awkward to search for.
             out.push('\n');
             out.push_str("  Note: what a backup stores is the decrypted filesystem.\n");
-            out.push_str("  The backup files themselves are NOT encrypted, by BitLocker or\n");
-            out.push_str("  by MjolnirVSS, so the drive holding them needs looking after as\n");
-            out.push_str("  carefully as the computer itself.\n");
+            out.push_str("  BitLocker does not protect it once it is off this machine.\n");
+            // This used to say the backup files are not encrypted full stop,
+            // which stopped being true when MjolnirVSS learned to encrypt
+            // them. A diagnostic cannot know what a later backup will be asked
+            // to do, so it says what is true either way, and what to do.
+            out.push_str("  Unless you back up with --encrypt, the backup files are not\n");
+            out.push_str("  encrypted either, and the drive holding them needs looking\n");
+            out.push_str("  after as carefully as the computer itself.\n");
         }
         out
     }
@@ -481,15 +486,24 @@ mod tests {
     }
 
     #[test]
-    fn the_report_warns_that_the_backup_itself_is_not_encrypted() {
+    fn the_report_says_bitlocker_does_not_travel_with_the_backup() {
         let d = diagnosis_with(
             Encryption::BitLockerUnlocked,
             Conclusion::EncryptedButSnapshotIsReadable,
         );
         let report = d.report();
-        assert!(report.contains("NOT encrypted"), "{report}");
+        // It must say BitLocker does not travel with the backup, and must
+        // not claim the backup cannot be encrypted, because it can be.
+        assert!(report.contains("decrypted filesystem"), "{report}");
+        assert!(report.contains("--encrypt"), "{report}");
         assert!(
-            report.contains("needs looking after as"),
+            !report.contains("NOT encrypted"),
+            "the flat claim is no longer true: {report}"
+        );
+        // The wording wraps, so this checks the parts rather than one phrase.
+        assert!(report.contains("needs looking"), "{report}");
+        assert!(
+            report.contains("carefully as the computer itself"),
             "the report must say the backup drive needs protecting: {report}"
         );
     }
@@ -497,7 +511,7 @@ mod tests {
     #[test]
     fn a_plain_volume_report_carries_no_encryption_warning() {
         let d = diagnosis_with(Encryption::None, Conclusion::PlainVolume);
-        assert!(!d.report().contains("NOT encrypted"));
+        assert!(!d.report().contains("decrypted filesystem"));
     }
 
     #[test]
