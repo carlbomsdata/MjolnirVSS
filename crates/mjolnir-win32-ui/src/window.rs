@@ -33,9 +33,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowTextLengthW, GetWindowTextW, IsDialogMessageW, KillTimer, LoadCursorW, PostMessageW,
     PostQuitMessage, RegisterClassW, SetTimer, SetWindowPos, ShowWindow, TranslateMessage,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW,
-    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_SIZE,
-    WM_TIMER, WNDCLASSW, WS_CAPTION, WS_EX_CONTROLPARENT, WS_MINIMIZEBOX, WS_OVERLAPPED,
-    WS_SYSMENU,
+    WM_ACTIVATE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED,
+    WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_EX_CONTROLPARENT, WS_MINIMIZEBOX,
+    WS_OVERLAPPED, WS_SYSMENU,
 };
 
 use crate::sys;
@@ -218,6 +218,16 @@ pub trait WindowHandler: 'static {
     /// A timer fired.
     fn on_timer(&mut self, window: &Window, id: usize) {
         let _ = (window, id);
+    }
+
+    /// The window became the active one.
+    ///
+    /// This is where keyboard focus has to be placed. Setting it while the
+    /// window is still being built does not hold: Windows gives focus to the
+    /// first control in the tab order when the window is activated, whatever
+    /// was asked for earlier.
+    fn on_activate(&mut self, window: &Window) {
+        let _ = window;
     }
 
     /// The window was asked to close. Returning false keeps it open.
@@ -425,6 +435,22 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         }
         WM_SIZE => {
             with_handler(|h| h.on_layout(&window));
+            LRESULT(0)
+        }
+        WM_ACTIVATE => {
+            // The low word is zero when the window is being deactivated, which
+            // is not a moment to move the keyboard anywhere.
+            if (wparam.0 & 0xFFFF) != 0 {
+                with_handler(|h| h.on_activate(&window));
+            }
+            LRESULT(0)
+        }
+        // The frame itself being given the keyboard means nothing can be typed
+        // at: a top level window is not a control. Windows sends this after
+        // WM_ACTIVATE, so this, not that, is the moment to hand the keyboard to
+        // a control that can use it.
+        WM_SETFOCUS => {
+            with_handler(|h| h.on_activate(&window));
             LRESULT(0)
         }
         WM_COMMAND => {

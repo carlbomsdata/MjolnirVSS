@@ -85,6 +85,22 @@ impl Step {
         }
     }
 
+    /// The buttons this step shows.
+    ///
+    /// The one place that decides, so what is laid out, what is shown and what
+    /// the overlap test checks cannot drift apart. Refresh and Back share the
+    /// right hand end of the row and are never shown together.
+    fn buttons(self) -> &'static [ButtonSlot] {
+        match self {
+            Step::FindBackup => &[ButtonSlot::Exit, ButtonSlot::Refresh, ButtonSlot::Next],
+            Step::SelectBackup | Step::SelectTarget | Step::Review => {
+                &[ButtonSlot::Exit, ButtonSlot::Back, ButtonSlot::Next]
+            }
+            Step::Restoring => &[ButtonSlot::Exit],
+            Step::Completed => &[ButtonSlot::Exit, ButtonSlot::Next],
+        }
+    }
+
     /// Where the keyboard goes when this step appears.
     ///
     /// Every step names a control the operator acts on. Leaving it to the tab
@@ -103,7 +119,56 @@ impl Step {
 
 #[cfg(test)]
 mod focus_tests {
-    use super::{Focus, Step};
+    use super::{button_row, Focus, Step};
+
+    /// No two buttons a step shows may share a pixel. One drawn over another
+    /// leaves a control that cannot be read but can still be tabbed to and
+    /// pressed, which is how the wizard used to go backwards on its own when
+    /// somebody tabbed out of the list.
+    #[test]
+    fn the_buttons_a_step_shows_do_not_overlap() {
+        for scale in [1, 2, 3] {
+            let s = move |v: i32| v * scale;
+            let x = super::MARGIN * scale;
+            let inner = (super::WINDOW_WIDTH - super::MARGIN * 2) * scale;
+            for step in super::ALL_STEPS {
+                let row = button_row(x, inner, &s);
+                let mut spans: Vec<(i32, i32)> =
+                    step.buttons().iter().map(|b| row.span(*b)).collect();
+                spans.sort_by_key(|(left, _)| *left);
+                for pair in spans.windows(2) {
+                    let (left, width) = pair[0];
+                    let (next_left, _) = pair[1];
+                    assert!(
+                        left + width <= next_left,
+                        "{step:?} at scale {scale}: a button ending at {} runs into one starting at {next_left}",
+                        left + width
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every button stays inside the window it is drawn in.
+    #[test]
+    fn no_button_hangs_off_the_edge() {
+        let s = |v: i32| v;
+        let x = 16;
+        let inner = 600;
+        let row = button_row(x, inner, &s);
+        for (name, (left, width)) in [
+            ("exit", row.exit),
+            ("refresh", row.refresh),
+            ("back", row.back),
+            ("next", row.next),
+        ] {
+            assert!(left >= x, "{name} starts left of the margin");
+            assert!(
+                left + width <= x + inner,
+                "{name} ends past the right margin"
+            );
+        }
+    }
 
     /// Every step a person has to act on hands the keyboard to the thing they
     /// act on, and a step showing a list hands it to the list.
@@ -162,30 +227,28 @@ impl Controls {
     }
 
     fn for_step(&self, step: Step) -> Vec<HWND> {
-        let mut v = vec![self.title, self.body, self.exit];
+        let mut v = vec![self.title, self.body];
+        // The buttons come from the step, so a button that is laid out is a
+        // button that is shown, and one that is hidden is never in the way.
+        for slot in step.buttons() {
+            v.push(match slot {
+                ButtonSlot::Exit => self.exit,
+                ButtonSlot::Refresh => self.refresh,
+                ButtonSlot::Back => self.back,
+                ButtonSlot::Next => self.next,
+            });
+        }
         match step {
-            Step::FindBackup => {
-                v.push(self.refresh);
-                v.push(self.next);
-            }
-            Step::SelectBackup | Step::SelectTarget => {
-                v.push(self.list);
-                v.push(self.back);
-                v.push(self.next);
-            }
+            Step::SelectBackup | Step::SelectTarget => v.push(self.list),
             Step::Review => {
                 v.push(self.confirm_label);
                 v.push(self.confirm_edit);
-                v.push(self.back);
-                v.push(self.next);
             }
             Step::Restoring => {
                 v.push(self.stage);
                 v.push(self.progress);
             }
-            Step::Completed => {
-                v.push(self.next);
-            }
+            _ => {}
         }
         v
     }
@@ -202,6 +265,63 @@ pub struct RecoveryWindow {
     plan: Option<RestorePlan>,
     worker: Option<Worker<RestoreOutcome>>,
     finished: Option<std::result::Result<RestoreOutcome, Error>>,
+}
+
+/// Every step, so a test can walk all of them and none is forgotten.
+#[cfg(test)]
+const ALL_STEPS: [Step; 6] = [
+    Step::FindBackup,
+    Step::SelectBackup,
+    Step::SelectTarget,
+    Step::Review,
+    Step::Restoring,
+    Step::Completed,
+];
+
+/// One of the four buttons along the bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ButtonSlot {
+    Exit,
+    Refresh,
+    Back,
+    Next,
+}
+
+/// Where each button in the bottom row goes, as (left, width).
+///
+/// Pulled out of the layout so it can be checked without a window. Back and
+/// Next used to overlap: Next was drawn on top, leaving a sliver of Back
+/// showing with no label on it. The sliver was still in the tab order, so a
+/// keyboard user tabbing from the list landed on an invisible button and went
+/// backwards on pressing Return. Found by driving the wizard in Windows PE.
+struct ButtonRow {
+    exit: (i32, i32),
+    refresh: (i32, i32),
+    back: (i32, i32),
+    next: (i32, i32),
+}
+
+impl ButtonRow {
+    fn span(&self, slot: ButtonSlot) -> (i32, i32) {
+        match slot {
+            ButtonSlot::Exit => self.exit,
+            ButtonSlot::Refresh => self.refresh,
+            ButtonSlot::Back => self.back,
+            ButtonSlot::Next => self.next,
+        }
+    }
+}
+
+fn button_row(x: i32, inner: i32, s: &dyn Fn(i32) -> i32) -> ButtonRow {
+    let gap = s(10);
+    let next_width = s(180);
+    let back_width = s(90);
+    ButtonRow {
+        exit: (x, s(90)),
+        refresh: (x + s(100), s(130)),
+        back: (x + inner - next_width - gap - back_width, back_width),
+        next: (x + inner - next_width, next_width),
+    }
 }
 
 impl RecoveryWindow {
@@ -682,19 +802,18 @@ impl RecoveryWindow {
             }
         }
 
-        sys::place(c.exit, sys::rect(x, bottom, s(90), s(BUTTON_HEIGHT)));
-        sys::place(
-            c.refresh,
-            sys::rect(x + s(100), bottom, s(130), s(BUTTON_HEIGHT)),
-        );
-        sys::place(
-            c.back,
-            sys::rect(x + inner - s(200), bottom, s(90), s(BUTTON_HEIGHT)),
-        );
-        sys::place(
-            c.next,
-            sys::rect(x + inner - s(180), bottom, s(180), s(BUTTON_HEIGHT)),
-        );
+        // Placed through the same spans the overlap test checks, so what is
+        // tested is what is drawn.
+        let row = button_row(x, inner, &s);
+        for (slot, hwnd) in [
+            (ButtonSlot::Exit, c.exit),
+            (ButtonSlot::Refresh, c.refresh),
+            (ButtonSlot::Back, c.back),
+            (ButtonSlot::Next, c.next),
+        ] {
+            let (left, width) = row.span(slot);
+            sys::place(hwnd, sys::rect(left, bottom, width, s(BUTTON_HEIGHT)));
+        }
     }
 
     /// Whether the window may close right now.
@@ -727,6 +846,12 @@ impl WindowHandler for RecoveryWindow {
 
     fn on_layout(&mut self, window: &Window) {
         self.layout(window);
+    }
+
+    fn on_activate(&mut self, window: &Window) {
+        // Where the keyboard goes is decided by the step, not by the order the
+        // controls were created in.
+        self.take_focus(window, self.step);
     }
 
     fn on_timer(&mut self, window: &Window, id: usize) {
@@ -774,14 +899,7 @@ mod tests {
 
     #[test]
     fn every_step_has_a_title_that_says_where_the_operator_is() {
-        for step in [
-            Step::FindBackup,
-            Step::SelectBackup,
-            Step::SelectTarget,
-            Step::Review,
-            Step::Restoring,
-            Step::Completed,
-        ] {
+        for step in ALL_STEPS {
             assert!(!step.title().is_empty());
         }
         assert!(Step::FindBackup.title().starts_with("Step 1 of 5"));

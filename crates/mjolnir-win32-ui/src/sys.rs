@@ -225,10 +225,13 @@ impl ControlKind {
             ControlKind::TextBox => {
                 base | WS_TABSTOP | WINDOW_STYLE((ES_LEFT | ES_AUTOHSCROLL) as u32)
             }
+            // Read only, and deliberately not a tab stop. It is output, not a
+            // control: a multiline edit tells Windows it wants the Return key,
+            // so when the dialog manager parked focus here Return did nothing
+            // and the window could not be advanced without a mouse. Found by
+            // running the recovery application in Windows PE.
             ControlKind::TextArea => {
-                base | WS_TABSTOP
-                    | WS_VSCROLL
-                    | WINDOW_STYLE((ES_LEFT | ES_MULTILINE | ES_READONLY) as u32)
+                base | WS_VSCROLL | WINDOW_STYLE((ES_LEFT | ES_MULTILINE | ES_READONLY) as u32)
             }
             ControlKind::ProgressBar => base,
             // LBS_NOTIFY is what makes a selection arrive as WM_COMMAND, and
@@ -534,7 +537,6 @@ mod tests {
             ControlKind::Button,
             ControlKind::DefaultButton,
             ControlKind::TextBox,
-            ControlKind::TextArea,
             ControlKind::ListBox,
         ] {
             assert_ne!(
@@ -543,8 +545,15 @@ mod tests {
                 "{kind:?} is not reachable by keyboard"
             );
         }
-        // Labels and progress bars are not interactive and must not take focus.
-        for kind in [ControlKind::Label, ControlKind::ProgressBar] {
+        // Nothing that only shows things may take focus. A read only text area
+        // is the one that is easy to get wrong: it looks like a control and
+        // behaves like one, and while it was in the tab order the dialog
+        // manager gave it the keyboard and it swallowed Return.
+        for kind in [
+            ControlKind::Label,
+            ControlKind::ProgressBar,
+            ControlKind::TextArea,
+        ] {
             assert_eq!(kind.style().0 & WS_TABSTOP.0, 0, "{kind:?} steals focus");
         }
     }
