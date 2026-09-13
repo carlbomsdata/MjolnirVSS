@@ -35,6 +35,8 @@ reliably.
   out, proven against a real Windows volume with every file checked by hash.
 - Recovery media built from the Windows parts already on the machine, booted on
   UEFI firmware.
+- Boot repair, proven by needing it: a restored disk was deliberately left
+  unbootable, and the repair is what made it start again.
 
 ---
 
@@ -62,25 +64,18 @@ larger disk, onto a disk whose sector size differs, and after a backup taken
 while the machine was busy. A restore that has been done once may have been
 lucky.
 
-### 2. Prove the boot repair, by needing it
-
-Boot repair is implemented and was not needed, which means it has never run for
-real. A restore has to be broken deliberately — the boot entries removed from
-the restored EFI partition — so that the repair is what makes the machine start.
-Code that has never been the thing that mattered is not tested.
-
-### 3. Backup encryption
+### 2. Backup encryption
 
 A real gap. The password is never stored, the design uses nothing home made, and
 it sits here rather than earlier because an encrypted backup that cannot be
 restored is worse than a plain one that can.
 
-### 4. Controlled hardware validation
+### 3. Controlled hardware validation
 
 Everything above happens in virtual machines. Real firmware, real disks, real
 failures.
 
-### 5. Recovery media on a USB stick
+### 4. Recovery media on a USB stick
 
 ISO output works and has been booted. Writing a USB stick erases it, so it needs
 the same confirmation a restore does, and it is behind the work above. Designed

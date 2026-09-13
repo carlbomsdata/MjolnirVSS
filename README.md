@@ -74,7 +74,7 @@ onto a blank replacement disk after the original has failed.
 | Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |
 | Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore from the keyboard |
 | **Booting a restored Windows** | **Done once, in a virtual machine.** Never on real hardware |
-| Repairing UEFI boot configuration after a restore | **Implemented**, and not yet needed: the restore that was booted needed no repair |
+| Repairing UEFI boot configuration after a restore | **Implemented and proven.** A restored disk was deliberately broken so it would not start, and the repair is what made it start again |
 | Restoring individual files from a backup | **Implemented**, proven against a real Windows volume out of a real backup |
 | Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
 | BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |

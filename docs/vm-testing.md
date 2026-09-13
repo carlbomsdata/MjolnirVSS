@@ -145,6 +145,20 @@ one cluster short of what the filesystem claims. MjolnirVSS now reads at most
 `total_clusters × bytes_per_cluster` through the snapshot and takes the rest
 from the disk.
 
+**Hard stopping a machine throws away what the guest just wrote.** The first
+attempt to break a restore deliberately deleted the boot files, powered the
+machine off hard, and found Windows booting quite happily: the deletion was
+still in the guest's cache and never reached the virtual disk. A test that
+writes inside a guest has to shut that guest down properly, with
+`wpeutil shutdown` in Windows PE, before the result can be trusted.
+
+**A restored disk's volumes already have drive letters.** Boot repair borrows a
+letter so it can run `bcdboot`, and a volume cannot be given a second one.
+Windows PE mounts what it finds, so repairing a disk restored earlier failed
+with "no drive letter was free" — which is the ordinary case for a standalone
+repair, and the only case it exists for. It now uses the letter a volume already
+has, and gives back only the letters it borrowed.
+
 **The browser decided what a partition held by reading a note.** The list of
 volumes to browse came from the filesystem name Windows recorded at backup time.
 Windows does not always record one: a volume it never mounted has no drive
@@ -182,6 +196,7 @@ On 13 September 2026, in one run:
 | Recovery media | Built from this computer's own Windows parts, booted on UEFI firmware, the application drawn and driven from the keyboard |
 | A restore onto a blank disk | 14.9 GiB written, four partitions, driven through the wizard with Tab and Enter |
 | **The restored Windows starting** | **It started, unaided.** No boot repair was needed |
+| Boot repair, by needing it | `\EFI\Microsoft` was deleted from the restored EFI partition; the machine then failed with `0xc000000f`, and `repair-boot --disk 0` is what made it start again |
 | The restored machine, checked | 12 of 12 files matched by hash; every partition kept its type GUID, unique GUID, offset and size; the EFI partition held `bootmgfw.efi`, `bootx64.efi` and the BCD; the boot entry named `winload.efi`; Windows RE was still registered at `harddisk0\partition4` |
 
 The compressed file is worth a note. File recovery refuses it, because handing
