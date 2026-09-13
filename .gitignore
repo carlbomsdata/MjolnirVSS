@@ -30,3 +30,10 @@ AGENTS.md
 *.user
 .DS_Store
 Thumbs.db
+
+# Python bytecode from the virtual machine harness tools.
+__pycache__/
+*.pyc
+
+# Build output from scripts/package.ps1.
+/dist/
