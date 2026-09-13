@@ -33,6 +33,8 @@ pub mod stages {
     pub const WRITING_TABLE: &str = "Writing the partition table";
     /// Making sure everything reached the disk.
     pub const FLUSHING: &str = "Finishing";
+    /// Checking, and if necessary rewriting, the boot configuration.
+    pub const REPAIRING_BOOT: &str = "Checking the boot configuration";
     /// Done.
     pub const COMPLETED: &str = "Completed";
 }
@@ -340,6 +342,7 @@ pub fn restore(
         written_bytes,
         partitions_restored: plan.writes.len(),
         unallocated_bytes: plan.unallocated_bytes,
+        boot_repair: None,
     })
 }
 
@@ -399,6 +402,11 @@ pub struct RestoreOutcome {
     pub partitions_restored: usize,
     /// Space left unallocated at the end of the target.
     pub unallocated_bytes: u64,
+    /// What the boot repair found and changed, when one was run.
+    ///
+    /// Absent when the restore was to a file rather than to a disk, which is
+    /// what the tests do: there is no disk for Windows to rescan.
+    pub boot_repair: Option<crate::boot::BootRepairReport>,
 }
 
 /// Parses a GUID string into the byte order a partition table stores.

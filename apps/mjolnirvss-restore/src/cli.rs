@@ -405,7 +405,7 @@ fn cmd_restore(
     let confirmation = mjolnir_restore::EraseConfirmation::check(&target, &typed)?;
     let mut disk = mjolnir_restore::WritableDisk::open(&target)?;
 
-    let outcome = mjolnir_restore::restore(
+    let mut outcome = mjolnir_restore::restore(
         &set,
         &plan,
         &target,
@@ -415,6 +415,24 @@ fn cmd_restore(
         cancel,
     )?;
     disk.refresh_partition_table()?;
+
+    // The disk has to be closed before Windows will show its new partitions,
+    // and the boot repair needs to see them.
+    drop(disk);
+
+    progress.begin(mjolnir_restore::stages::REPAIRING_BOOT, None);
+    match mjolnir_restore::repair_disk(target.number) {
+        Ok(report) => outcome.boot_repair = Some(report),
+        Err(e) => {
+            // A restore that worked is not undone by a boot repair that did
+            // not. What happened is reported and the operator decides.
+            eprintln!();
+            eprintln!("The restore finished, but the boot configuration could not be checked:");
+            eprintln!("  {}", e.what());
+            eprintln!("  {}", e.why());
+        }
+    }
+    progress.end();
 
     println!();
     println!("Restore completed.");
@@ -429,6 +447,11 @@ fn cmd_restore(
             mjolnir_core::progress::format_bytes(outcome.unallocated_bytes)
         );
     }
+    if let Some(report) = &outcome.boot_repair {
+        println!();
+        print!("{}", report.describe());
+    }
+
     println!();
     println!("  Restart the computer and remove the recovery media.");
     println!("  If Windows does not start, boot the recovery media again and run");

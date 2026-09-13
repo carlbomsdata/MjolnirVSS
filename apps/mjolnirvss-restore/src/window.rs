@@ -386,7 +386,7 @@ impl RecoveryWindow {
         self.worker = Some(Worker::start(move |progress, cancel| {
             let set = mjolnir_image::BackupSet::open(&backup_path)?;
             let mut disk = mjolnir_restore::WritableDisk::open(&worker_target)?;
-            let outcome = mjolnir_restore::restore(
+            let mut outcome = mjolnir_restore::restore(
                 &set,
                 &plan,
                 &worker_target,
@@ -396,6 +396,15 @@ impl RecoveryWindow {
                 cancel,
             )?;
             disk.refresh_partition_table()?;
+
+            // Closed before the repair, because Windows will not show the new
+            // partitions while the disk is open for writing.
+            drop(disk);
+
+            progress.begin(mjolnir_restore::stages::REPAIRING_BOOT, None);
+            outcome.boot_repair = mjolnir_restore::repair_disk(worker_target.number).ok();
+            progress.end();
+
             Ok(outcome)
         }));
 

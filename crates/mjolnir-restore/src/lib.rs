@@ -15,12 +15,15 @@
 
 #![warn(missing_docs)]
 
+pub mod boot;
 pub mod run;
 pub mod target;
 
 #[cfg(windows)]
+pub mod windows_boot;
 pub mod windows_target;
 
+pub use boot::{decide as decide_boot_repair, BootDecision, BootRepairReport, BootState};
 pub use run::{
     build_partition_table, check_chunks_present, plan, restore, stages, PlannedWrite,
     RestoreOutcome, RestorePlan,
@@ -28,4 +31,5 @@ pub use run::{
 pub use target::{check_target, EraseConfirmation, TargetDisk};
 
 #[cfg(windows)]
+pub use windows_boot::{repair_disk, RestoredVolumes};
 pub use windows_target::{describe_target, enumerate_targets, WritableDisk};
