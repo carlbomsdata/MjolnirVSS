@@ -330,6 +330,21 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         warnings.push(warning.to_owned());
     }
 
+    // What Windows says is in use on the volumes being captured. An upper
+    // bound on what will be stored, and the only figure available before the
+    // disk is read that is a fact rather than a guess.
+    let in_use_bytes: u64 = snapshot_volumes
+        .iter()
+        .filter_map(|guid| volumes.iter().find(|v| &v.guid_path == guid))
+        .map(|v| v.used_bytes())
+        .sum::<u64>()
+        + head_bytes
+        + tail_bytes;
+    if let Some(warning) = check_destination_has_room(&request.destination, &volumes, in_use_bytes)?
+    {
+        warnings.push(warning);
+    }
+
     if request.limit.is_preview() {
         warnings.push(
             "This is a preview run: only the first part of each partition is captured, and the result cannot be restored."
@@ -471,6 +486,77 @@ fn check_partition_is_supported(
     }
 
     Ok(())
+}
+
+/// Free space below which a destination cannot hold a backup of anything.
+///
+/// Deliberately not an estimate of how large the backup will be. That cannot
+/// be known before the disk is read, because it depends on how well what is on
+/// it compresses, and a guess that refused a destination the backup would have
+/// fitted in would be worse than no check at all.
+///
+/// This is only a floor: no backup of a Windows system disk has ever fitted in
+/// sixty-four megabytes, so a destination with less than that is a mistake
+/// worth catching in the second it takes to look, rather than after an hour of
+/// reading. It was added after a test run spent five minutes copying before the
+/// destination — which had 1.2 MB free — reported that it was full.
+const DESTINATION_FLOOR_BYTES: u64 = 64 << 20;
+
+/// Looks at how much room the destination has, before anything is read.
+///
+/// Returns an error only when the destination plainly cannot hold a backup.
+/// Otherwise it may return a warning, because a destination smaller than the
+/// data is not necessarily too small: only the parts of each volume that are in
+/// use are stored, and they are compressed on the way. How much that saves is a
+/// property of what is on the disk, so the honest thing to say is what is known
+/// and what is not.
+fn check_destination_has_room(
+    destination: &Path,
+    volumes: &[VolumeInfo],
+    in_use_bytes: u64,
+) -> Result<Option<String>> {
+    let Some(target) = volume_for_path(destination, volumes) else {
+        // A network location, or a path whose volume cannot be identified.
+        // The write itself will report a real problem.
+        return Ok(None);
+    };
+
+    let free = mjolnir_core::progress::format_bytes(target.free_bytes);
+    if target.free_bytes < DESTINATION_FLOOR_BYTES {
+        return Err(Error::new(
+            ExitCode::Destination,
+            format!(
+                "the backup destination {} has only {free} free",
+                destination.display()
+            ),
+            "a backup of a Windows system disk cannot fit in that, so the copy would run for a long time and then stop when the drive filled",
+            "free up space on that drive, or choose one with room for the backup",
+        ));
+    }
+
+    if target.free_bytes >= in_use_bytes {
+        // Certain to fit: the stored backup is never larger than the data.
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "The destination has {free} free, and the volumes being copied hold {} of data. MjolnirVSS stores only the parts that are in use, compressed, so the backup will be smaller than that - but how much smaller cannot be known before the disk is read. If the drive fills, the backup stops and says so.",
+        mjolnir_core::progress::format_bytes(in_use_bytes)
+    )))
+}
+
+/// The volume a path sits on, when it can be identified.
+fn volume_for_path(path: &Path, volumes: &[VolumeInfo]) -> Option<VolumeInfo> {
+    let text = path.to_string_lossy();
+    let bytes = text.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' {
+        return None;
+    }
+    let letter = (bytes[0] as char).to_ascii_uppercase().to_string();
+    volumes
+        .iter()
+        .find(|v| v.drive_letter().as_deref() == Some(letter.as_str()))
+        .cloned()
 }
 
 /// Refuses to write a backup onto the disk being backed up.
@@ -987,5 +1073,71 @@ mod tests {
         assert!(decide(Encryption::BitLockerUnlocked));
         assert!(decide(Encryption::Unknown));
         assert!(!decide(Encryption::BitLockerLocked));
+    }
+    /// A destination with nothing free is caught before anything is read.
+    ///
+    /// This is the case that produced the check: a test run copied for five
+    /// minutes onto a drive with 1.2 MB free before Windows reported it full.
+    #[test]
+    fn a_destination_with_no_room_is_refused_up_front() {
+        let mut target = volume(Some("E"), 1, 0, "NTFS");
+        target.free_bytes = 1_269_760;
+        let volumes = vec![volume(Some("C"), 0, 1 << 20, "NTFS"), target];
+
+        let err = check_destination_has_room(Path::new("E:\\Backups"), &volumes, 64 << 30)
+            .expect_err("a drive with 1.2 MB free cannot hold a backup");
+        assert_eq!(err.exit(), ExitCode::Destination);
+        assert!(err.what().contains("1.2 MiB"), "{}", err.what());
+        assert!(
+            err.next_step().contains("free up space"),
+            "{}",
+            err.next_step()
+        );
+    }
+
+    /// Smaller than the data is not the same as too small, because only the
+    /// used parts are stored and they are compressed. That gets a warning with
+    /// both numbers in it, not a refusal.
+    #[test]
+    fn a_tight_destination_warns_rather_than_refusing() {
+        let mut target = volume(Some("E"), 1, 0, "NTFS");
+        target.free_bytes = 20 << 30;
+        let volumes = vec![target];
+
+        let warning = check_destination_has_room(Path::new("E:\\Backups"), &volumes, 40 << 30)
+            .expect("a smaller destination is allowed through")
+            .expect("but it should say so");
+        assert!(warning.contains("20.0 GiB"), "{warning}");
+        assert!(warning.contains("40.0 GiB"), "{warning}");
+        assert!(
+            warning.contains("cannot be known"),
+            "it must not promise a size it cannot know: {warning}"
+        );
+    }
+
+    /// Room for the data uncompressed is certain to be enough, and says nothing.
+    #[test]
+    fn a_roomy_destination_says_nothing() {
+        let mut target = volume(Some("E"), 1, 0, "NTFS");
+        target.free_bytes = 200 << 30;
+        let volumes = vec![target];
+
+        assert!(
+            check_destination_has_room(Path::new("E:\\Backups"), &volumes, 40 << 30)
+                .expect("plenty of room")
+                .is_none()
+        );
+    }
+
+    /// A destination whose volume cannot be identified is left alone: a network
+    /// share has no drive letter to look up, and refusing it would be wrong.
+    #[test]
+    fn an_unidentifiable_destination_is_allowed_through() {
+        let volumes = vec![volume(Some("C"), 0, 1 << 20, "NTFS")];
+        assert!(
+            check_destination_has_room(Path::new(r"\\server\share"), &volumes, 40 << 30)
+                .expect("a share is not refused")
+                .is_none()
+        );
     }
 }
