@@ -88,7 +88,17 @@ try {
     if (Test-Path (Join-Path $RepoRoot "NOTICE")) {
         Copy-Item (Join-Path $RepoRoot "NOTICE") $OutputPath
     }
+    if (Test-Path (Join-Path $RepoRoot "CHANGELOG.md")) {
+        Copy-Item (Join-Path $RepoRoot "CHANGELOG.md") $OutputPath
+    }
     Copy-Item (Join-Path $RepoRoot "docs\*.md") (Join-Path $OutputPath "docs")
+
+    # The README shows the window, so the pictures have to come with it or the
+    # copy in the package is a document full of broken links.
+    $images = Join-Path $RepoRoot "docs\images"
+    if (Test-Path $images) {
+        Copy-Item $images (Join-Path $OutputPath "docs") -Recurse
+    }
 
     # --- check the recovery executable ----------------------------------
     # This is the check that matters. If it ever fails, the recovery

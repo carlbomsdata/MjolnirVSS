@@ -47,8 +47,15 @@ mod tests {
     #[test]
     fn tool_version_looks_like_a_version() {
         // It is written into every manifest, so a reader on another machine
-        // has to be able to make sense of it.
-        let parts: Vec<&str> = TOOL_VERSION.split('.').collect();
+        // has to be able to make sense of it. A pre release suffix is allowed
+        // and is part of saying honestly what a build is: `0.1.0-alpha.1` is a
+        // more useful thing to find in a manifest than `0.1.0`.
+        let (numbers, pre) = match TOOL_VERSION.split_once('-') {
+            Some((numbers, pre)) => (numbers, Some(pre)),
+            None => (TOOL_VERSION, None),
+        };
+
+        let parts: Vec<&str> = numbers.split('.').collect();
         assert_eq!(
             parts.len(),
             3,
@@ -56,8 +63,18 @@ mod tests {
         );
         for part in parts {
             assert!(
-                part.chars().all(|c| c.is_ascii_digit()),
+                !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()),
                 "{TOOL_VERSION:?} has a non numeric component"
+            );
+        }
+
+        if let Some(pre) = pre {
+            assert!(
+                !pre.is_empty()
+                    && pre
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'),
+                "{TOOL_VERSION:?} has a pre release part that is not usable: {pre:?}"
             );
         }
     }
