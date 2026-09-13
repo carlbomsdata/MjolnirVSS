@@ -246,6 +246,15 @@ pub trait WindowHandler: 'static {
     }
 }
 
+/// Sent to the window once, after it is on screen, so the handler can put the
+/// keyboard somewhere useful.
+///
+/// Focus cannot be settled while the window is being created or shown: it is
+/// not the foreground window yet, and `SetFocus` on one of its controls does
+/// not stick. Posting means it is handled from the message loop, by which time
+/// the window is really there.
+const WM_MJOLNIR_SETTLE_FOCUS: u32 = 0x0400 + 0x40;
+
 /// `DM_GETDEFID`, which the Windows headers define as `WM_USER + 0`.
 ///
 /// Not in the `windows` crate, so it is written out here with the value the
@@ -278,6 +287,17 @@ thread_local! {
 /// See the module comment: a message that arrives while an outer message is
 /// still being handled, which is what a modal dialog causes, is dropped rather
 /// than allowed to panic through a Win32 callback.
+/// Runs `f` with this thread's handler, unless one is already running.
+///
+/// Windows delivers messages inside other messages: showing a control from a
+/// button handler sends `WM_SIZE` before the button handler returns. Rather
+/// than allow a handler to re-enter itself, which would need every handler to
+/// be written for it, the inner call is dropped.
+///
+/// That is a real trade, and the cost is that a message arriving during a
+/// handler is lost. Anything that must happen once the window has settled is
+/// posted rather than sent, so it arrives from the message loop with nothing
+/// else in progress.
 fn with_handler(f: impl FnOnce(&mut dyn WindowHandler)) {
     HANDLER.with(|cell| {
         if let Ok(mut borrowed) = cell.try_borrow_mut() {
@@ -394,6 +414,12 @@ where
     window.show();
     window.update();
 
+    // SAFETY: the handle names a live window and the message carries no
+    // pointers. It is handled once, from the loop below.
+    unsafe {
+        let _ = PostMessageW(Some(hwnd), WM_MJOLNIR_SETTLE_FOCUS, WPARAM(0), LPARAM(0));
+    }
+
     pump_messages(hwnd);
 
     sys::release_ui_font();
@@ -476,7 +502,7 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         // at: a top level window is not a control. Windows sends this after
         // WM_ACTIVATE, so this, not that, is the moment to hand the keyboard to
         // a control that can use it.
-        WM_SETFOCUS => {
+        WM_SETFOCUS | WM_MJOLNIR_SETTLE_FOCUS => {
             with_handler(|h| h.on_activate(&window));
             LRESULT(0)
         }
