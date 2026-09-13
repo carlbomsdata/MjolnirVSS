@@ -300,11 +300,15 @@ pub fn assess(
 /// to refuse to take a backup.
 #[cfg(windows)]
 pub fn inspect(volumes: &[VolumeToSnapshot]) -> Result<SnapshotPreflight> {
-    let copies = mjolnir_storage::wmi::shadow_copies().unwrap_or_default();
-    let storage = mjolnir_storage::wmi::shadow_storage().unwrap_or_default();
-    if copies.is_empty() && storage.is_empty() {
+    // A query that answers with nothing is an answer: the machine keeps no
+    // shadow copies, so there is nothing to lose. Only a query that could not
+    // be made at all leaves the state unknown.
+    let (Ok(copies), Ok(storage)) = (
+        mjolnir_storage::wmi::shadow_copies(),
+        mjolnir_storage::wmi::shadow_storage(),
+    ) else {
         return Ok(SnapshotPreflight::unknown());
-    }
+    };
     Ok(assess(volumes, &copies, &storage))
 }
 
@@ -434,6 +438,21 @@ mod tests {
             &[storage(C_DRIVE, 59 << 30, Some(60 << 30))],
         );
         assert_eq!(report.risk(), RestorePointRisk::Likely);
+    }
+
+    /// A machine that keeps no shadow copies at all is a normal machine, and
+    /// must read as "nothing to lose" rather than as "nothing is known". Those
+    /// are different sentences and only one of them is true.
+    #[test]
+    fn a_machine_with_no_shadow_copies_at_all_is_answered_not_unknown() {
+        let report = assess(&[volume(C_DRIVE, "C")], &[], &[]);
+        assert!(report.answered);
+        assert_eq!(report.risk(), RestorePointRisk::None);
+        assert_eq!(report.warning(), None);
+
+        let details = report.details().join(" ");
+        assert!(details.contains("no existing restore points"));
+        assert!(!details.contains("nothing is known"));
     }
 
     /// Not being able to ask must never read as "there is nothing to lose".

@@ -206,8 +206,12 @@ pub fn shadow_storage() -> Result<Vec<ShadowStorage>> {
     // this apartment and must be released before it is left.
     let _apartment = Apartment::enter();
 
+    // Unlike the BitLocker namespace, this one exists on every Windows, so
+    // failing to reach it is a failure rather than an answer. An empty list
+    // from a namespace that answered means the machine has no shadow copy
+    // storage, which is a real and common state.
     let Some(services) = connect(CIMV2_NAMESPACE)? else {
-        return Ok(Vec::new());
+        return Err(unreachable_namespace(CIMV2_NAMESPACE));
     };
 
     let mut out = Vec::new();
@@ -251,7 +255,7 @@ pub fn shadow_copies() -> Result<Vec<ShadowCopy>> {
     let _apartment = Apartment::enter();
 
     let Some(services) = connect(CIMV2_NAMESPACE)? else {
-        return Ok(Vec::new());
+        return Err(unreachable_namespace(CIMV2_NAMESPACE));
     };
 
     let mut out = Vec::new();
@@ -558,6 +562,16 @@ fn property_u64(object: &IWbemClassObject, name: &str) -> Option<u64> {
 /// Reads a boolean property from a WMI object.
 fn property_bool(object: &IWbemClassObject, name: &str) -> Option<bool> {
     property(object, name)?.as_bool()
+}
+
+/// A namespace that should exist and did not.
+fn unreachable_namespace(namespace: &str) -> Error {
+    Error::new(
+        ExitCode::Failure,
+        "the Windows management service could not be reached",
+        format!("the {namespace} namespace did not answer"),
+        "this is usually a temporary failure of the management service; the operation carries on without what it would have said",
+    )
 }
 
 fn wmi_error(what: &str, e: windows::core::Error) -> Error {
