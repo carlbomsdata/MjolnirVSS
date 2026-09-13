@@ -72,7 +72,7 @@ onto a blank replacement disk after the original has failed.
 | Rebuilding the partition table on the replacement disk | **Implemented**, and the restored table checked partition by partition against the original |
 | Refusing unsafe restore targets | **Implemented and tested** |
 | Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |
-| Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore from the keyboard |
+| Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore with no mouse at all |
 | **Booting a restored Windows** | **Done once, in a virtual machine.** Never on real hardware |
 | Repairing UEFI boot configuration after a restore | **Implemented and proven.** A restored disk was deliberately broken so it would not start, and the repair is what made it start again |
 | Restoring individual files from a backup | **Implemented**, proven against a real Windows volume out of a real backup |
