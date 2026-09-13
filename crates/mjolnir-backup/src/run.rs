@@ -656,9 +656,19 @@ fn snapshot_readable_bytes(device: &Device, sector_size: u32) -> Option<u64> {
     device.read_at(0, &mut sector).ok()?;
 
     match mjolnir_ntfs::NtfsBootSector::parse(&sector) {
-        // The filesystem's own idea of its size, which is where a shadow copy
-        // of it stops.
-        Ok(boot) => boot.volume_bytes().ok(),
+        // Whole clusters of the filesystem, which is where a shadow copy of it
+        // stops. Not the sector count: NTFS counts one sector fewer than the
+        // partition holds, and the last partial cluster left over from that is
+        // not in the snapshot either. Measured on a Windows 11 machine, a
+        // shadow copy of a 67,423,436,800 byte partition could be read to
+        // 67,423,432,704, which is exactly 16,460,799 clusters of 4,096 bytes.
+        Ok(boot) => {
+            let whole_clusters = boot
+                .total_clusters()
+                .checked_mul(boot.bytes_per_cluster())?;
+            let by_sectors = boot.volume_bytes().ok()?;
+            Some(whole_clusters.min(by_sectors))
+        }
         // Not NTFS, or not readable. The device's answer is better than
         // nothing.
         Err(_) => device.query_length(),
