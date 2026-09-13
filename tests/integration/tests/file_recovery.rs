@@ -111,7 +111,10 @@ fn planned_volume(partition_bytes: u64) -> NtfsVolumeBuilder {
                 "linked.txt",
                 b"one file, two names".to_vec(),
             )
-            .hard_linked_as(record::PHOTOS, "also-linked.txt"),
+            .hard_linked_as(record::PHOTOS, "also-linked.txt")
+            // And a second name in the *same* folder, which is what a real
+            // Windows volume produced and what used to be dropped.
+            .hard_linked_as(record::DOCUMENTS, "linked-again.txt"),
         )
 }
 
@@ -568,7 +571,10 @@ fn copying_a_folder_out_brings_everything_readable_under_it() {
         let mut total = large_contents().len() as u64;
         total += "the visible contents".len() as u64;
         total += "[ZoneTransfer]\r\nZoneId=3\r\n".len() as u64;
-        total += "one file, two names".len() as u64;
+        // Both names of the hard linked file are copied, so its contents are
+        // written twice. That is what a hard link is on a filesystem that
+        // cannot hold one.
+        total += 2 * "one file, two names".len() as u64;
         total
     });
 }
@@ -671,4 +677,93 @@ fn fingerprint(dir: &Path) -> Vec<(String, u64)> {
     }
     out.sort();
     out
+}
+
+/// The bug a real Windows volume found: a file with two names in one folder was
+/// copied out once, under whichever name its record listed first, and the other
+/// name vanished with no file and no message.
+#[test]
+fn every_name_of_a_hard_linked_file_is_copied_out() {
+    let (_temp, subject, dir) = prepared();
+    let out = tempfile::tempdir().unwrap();
+    let set = BackupSet::open(&dir).unwrap();
+    let stream = mjolnir_files::stream_in(&set, &subject.stream_id()).unwrap();
+    let mut open = OpenVolume::open(&set, stream, &CancelToken::new()).unwrap();
+
+    let documents = open.index().entry(record::DOCUMENTS).cloned().unwrap();
+    let outcome = extract_tree(
+        &mut open,
+        &documents,
+        out.path(),
+        &ExtractOptions::default(),
+        &mut SilentProgress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.failed(), 0, "{:?}", outcome.files);
+    for name in ["linked.txt", "linked-again.txt"] {
+        let at = out.path().join("Documents").join(name);
+        assert!(
+            at.is_file(),
+            "{name} was not copied out: {:?}",
+            outcome.files
+        );
+        assert_eq!(std::fs::read(&at).unwrap(), b"one file, two names".to_vec());
+    }
+
+    // The name in the folder that was not copied stays where it is.
+    assert!(
+        !out.path().join("Photos\\also-linked.txt").exists(),
+        "copying one folder must not reach into another"
+    );
+}
+
+/// A short name is not a second place a file lives, so a file that has one is
+/// not hard linked. On a real Windows volume almost every file has one, and
+/// counting them marked the whole listing.
+#[test]
+fn a_file_with_one_name_is_not_reported_as_hard_linked() {
+    let (_temp, subject, dir) = prepared();
+    let set = BackupSet::open(&dir).unwrap();
+    let stream = mjolnir_files::stream_in(&set, &subject.stream_id()).unwrap();
+    let open = OpenVolume::open(&set, stream, &CancelToken::new()).unwrap();
+    let index = open.index();
+
+    let readme = index.entry(record::README).unwrap();
+    assert!(!readme.is_hard_linked, "one name is not a hard link");
+
+    assert!(
+        index
+            .names_of(record::LINKED)
+            .iter()
+            .all(|e| e.is_hard_linked),
+        "three names is"
+    );
+    assert_eq!(index.names_of(record::LINKED).len(), 3);
+}
+
+/// A path is a name in a folder, so a record with several names has several.
+#[test]
+fn each_name_of_a_file_has_its_own_path() {
+    let (_temp, subject, dir) = prepared();
+    let set = BackupSet::open(&dir).unwrap();
+    let stream = mjolnir_files::stream_in(&set, &subject.stream_id()).unwrap();
+    let open = OpenVolume::open(&set, stream, &CancelToken::new()).unwrap();
+    let index = open.index();
+
+    let mut paths: Vec<String> = index
+        .names_of(record::LINKED)
+        .iter()
+        .filter_map(|e| index.path_of_entry(e))
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "\\Documents\\linked-again.txt".to_owned(),
+            "\\Documents\\linked.txt".to_owned(),
+            "\\Photos\\also-linked.txt".to_owned(),
+        ]
+    );
 }

@@ -156,9 +156,11 @@ pub fn extract_file(
     progress: &mut dyn Progress,
     cancel: &CancelToken,
 ) -> Result<Vec<Extracted>> {
+    // The name this entry was reached by, not whichever name the record
+    // happens to list first. A file with two names is two files to copy out.
     let source = open
         .index()
-        .path_of(entry.number)
+        .path_of_entry(entry)
         .unwrap_or_else(|| format!("<record {}>", entry.number));
 
     if entry.is_directory {
@@ -377,22 +379,24 @@ pub fn extract_tree(
     cancel: &CancelToken,
 ) -> Result<ExtractOutcome> {
     let mut outcome = ExtractOutcome::default();
-    let mut queue = vec![root.number];
-    let mut seen = std::collections::BTreeSet::new();
+    // The queue carries names rather than record numbers. A file with several
+    // names in the folder being copied is several files to write, and walking
+    // by record number would write one of them and drop the rest without
+    // saying so.
+    let mut queue = vec![root.clone()];
+    let mut visited_directories = std::collections::BTreeSet::new();
+    let mut written_names = std::collections::BTreeSet::new();
 
-    while let Some(number) = queue.pop() {
+    while let Some(entry) = queue.pop() {
         cancel.check()?;
-        if !seen.insert(number) {
-            // A hard link or a loop in a damaged volume would otherwise make
-            // this run forever.
-            continue;
-        }
-
-        let Some(entry) = open.index().entry(number).cloned() else {
-            continue;
-        };
 
         if entry.is_directory {
+            // Directories are still walked once each. A directory reachable
+            // twice, or a loop in a damaged volume, would otherwise make this
+            // run forever.
+            if !visited_directories.insert(entry.number) {
+                continue;
+            }
             // A junction is a directory that points somewhere else. Walking
             // into one would copy a part of the volume nobody asked for, and
             // could walk in a circle.
@@ -400,15 +404,24 @@ pub fn extract_tree(
                 outcome.files.push(Extracted::Skipped {
                     source: open
                         .index()
-                        .path_of(number)
+                        .path_of_entry(&entry)
                         .unwrap_or_else(|| entry.name.clone()),
                     reason: "it is a junction, and following one copies a part of the volume nobody asked for".to_owned(),
                 });
                 continue;
             }
-            for child in open.index().children_of(number) {
-                queue.push(child.number);
-            }
+            let children: Vec<IndexEntry> = open
+                .index()
+                .children_of(entry.number)
+                .into_iter()
+                .cloned()
+                .collect();
+            queue.extend(children);
+            continue;
+        }
+
+        // The same name reached twice is one file, not two.
+        if !written_names.insert((entry.number, entry.name.clone())) {
             continue;
         }
 

@@ -374,7 +374,10 @@ impl FileIndex {
                     is_compressed: data.map(Attribute::is_compressed).unwrap_or(false),
                     is_encrypted: data.map(Attribute::is_encrypted).unwrap_or(false),
                     is_sparse: data.map(Attribute::is_sparse).unwrap_or(false),
-                    is_hard_linked: record.hard_link_count > 1,
+                    // Filled in below: a record's own count includes the
+                    // short name Windows gives almost every file, so it says
+                    // "hard linked" about nearly everything on a real volume.
+                    is_hard_linked: false,
                     streams: streams.clone(),
                 };
                 index.children.entry(entry.parent).or_default().push(number);
@@ -385,6 +388,16 @@ impl FileIndex {
         for list in index.children.values_mut() {
             list.sort_unstable();
             list.dedup();
+        }
+        // A file is hard linked when the index found it under more than one
+        // name that a person could type. Short names are not counted: they are
+        // not a second place the file lives, and counting them would mark
+        // almost every file on a Windows volume as hard linked.
+        for names in index.entries.values_mut() {
+            let linked = names.len() > 1;
+            for entry in names.iter_mut() {
+                entry.is_hard_linked = linked;
+            }
         }
         Ok(index)
     }
@@ -458,6 +471,28 @@ impl FileIndex {
             at = entry.parent;
         }
         None
+    }
+
+    /// The path of one particular name of a record.
+    ///
+    /// [`FileIndex::path_of`] answers for the record, which means the first
+    /// name it happens to have. A file with several names has several paths,
+    /// and copying one out has to use the name it was reached by, or the other
+    /// names are silently lost.
+    pub fn path_of_entry(&self, entry: &IndexEntry) -> Option<String> {
+        if entry.number == MftReference::ROOT {
+            return Some("\\".to_owned());
+        }
+        let parent = if entry.parent == MftReference::ROOT {
+            "\\".to_owned()
+        } else {
+            self.path_of(entry.parent)?
+        };
+        Some(if parent.ends_with('\\') {
+            format!("{parent}{}", entry.name)
+        } else {
+            format!("{parent}\\{}", entry.name)
+        })
     }
 
     /// Finds an entry by path, case insensitively.
