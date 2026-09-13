@@ -1,101 +1,130 @@
 # Getting single files back
 
-**Not implemented.** The **Restore files** button in the main window says so.
-
-The format supports it and the schema is specified and validated. What is missing
-is the NTFS reader that fills the index in, and the browser that shows it. This
-document describes the design so the shape of the work is clear.
+Open a backup, look inside it, and copy what you need out. No restore, no
+erasing anything, no drive letter.
 
 ---
 
-## What it will do
+## From the window
 
-Open a backup, show the volumes inside it, browse the folders read only, select
-files or folders, and extract them somewhere else.
+Press **Restore files**, choose the backup, choose the drive, browse, then
+press **Copy out...**
 
-Explicitly **not** a drive letter. Mounting a backup as a Windows volume would
-need a filesystem driver, and MjolnirVSS installs nothing. A read only browser
-and an extract button covers what people actually need, which is getting a file
-back after deleting it.
+The list shows folders first, then files, with the size of each and a note when
+there is something worth knowing: a link, a compressed or encrypted file, or a
+file with hidden streams. Double click or **Open** goes in, **Up** comes back
+out.
 
-**The backup is never modified while browsing it.** Every file in it is opened
-read only, and the extract path writes only to the destination the operator
-chose.
+## From a command prompt
 
----
-
-## Why an index
-
-A backup holds the raw bytes of an NTFS volume. Finding a file means parsing the
-master file table, which for a large volume means reading a lot of blocks. Doing
-that every time somebody opens a folder would make browsing unusable.
-
-So the index is built once, during the backup, and stored beside the data:
-
-```text
-indexes/volume-<id>.json
+```powershell
+MjolnirVSS.exe volumes E:\Backups\DESKTOP-1A2B_2026-09-12_1015
+MjolnirVSS.exe browse  E:\Backups\... --volume disk-0-part-3 --folder \Users\tobias
+MjolnirVSS.exe extract E:\Backups\... --volume disk-0-part-3 --item \Users\tobias\Documents --into D:\Recovered
 ```
 
-It records, for every file and folder: its name, its parent, its size, when it
-was last written, and **where its contents are inside the captured volume**. With
-that, opening a folder costs a JSON parse, and extracting a file costs only the
-blocks that actually hold it.
-
-The schema is in [`backup-format.md`](backup-format.md) and implemented in
-`crates/mjolnir-image/src/index.rs`, with validation and tests already written.
-
-### The index is an accelerator, never an authority
-
-Extraction always reads the blocks through the normal path, which checks each one
-against its checksum. A damaged or forged index can make MjolnirVSS fail to find
-a file; it cannot make it hand back the wrong bytes as though they were right.
-
-The validator refuses an index whose entries point outside the captured volume,
-whose data runs are longer than the file they belong to, whose parent chain
-loops, or whose names are really paths. Those are all tested.
+Add `--json` to any of them for output a script can read.
 
 ---
 
-## What has to be built
+## What it will not do
 
-1. **An NTFS reader** (`crates/mjolnir-ntfs`, currently empty). Enough to parse
-   the boot sector, the master file table, `$MFT` records, the `$I30` directory
-   indexes and non resident data runs. It reads from a `BlockSource`, so it can
-   be tested against synthetic volumes with no Windows involved.
-2. **Index generation** during a backup, writing the document and recording its
-   digest in `completion.json` like the other documents.
-3. **The browser**, a tree and a list in the main window, reading only the index.
-4. **Extraction**, reading the blocks the index names, checking each one, and
-   writing the file out.
+**It is not a drive letter.** Mounting a backup as a Windows volume would need a
+filesystem driver, and MjolnirVSS installs nothing. A read only browser and a
+copy button covers what people actually need, which is getting a file back.
 
-Step 1 is most of the work and is also what used block imaging needs, so the two
-arrive together. Today's backups copy every byte of a volume including free
-space; reading the NTFS allocation bitmap is what lets MjolnirVSS skip the free
-space, and that makes backups substantially smaller and faster.
+**It never modifies the backup.** Everything in the backup folder is opened read
+only. The code that browses lives in its own crate which depends on nothing that
+can write to a disk, so browsing a backup is not one mistyped argument away from
+erasing one.
 
----
+**It does not follow links by default.** A junction or a symbolic link in a
+backup points at a path on the machine the backup came from. Following one while
+writing somewhere else is how an extraction ends up outside the folder you
+chose, so they are skipped and listed as skipped. `--follow-links` overrides it.
 
-## What will not be supported at first
-
-- **Alternate data streams.** Only the main contents of a file.
-- **Resident files.** A file small enough for NTFS to store inside its own record
-  has no data runs. The format records this honestly by giving such an entry no
-  runs, rather than pretending it is empty.
-- **Compressed, sparse and encrypted files.** NTFS compression and EFS need
-  decoding that is not planned yet. Such a file will be listed and marked as not
-  extractable, rather than extracted incorrectly.
-- **Permissions and ownership.** Extracted files get the permissions of wherever
-  they are written. Getting the contents back is the point; reproducing an access
-  control list from another machine mostly produces files the operator cannot
-  open.
-- **FAT32 volumes.** The EFI system partition is captured and restored, but it is
-  not browsable. There is nothing in it a person wants to recover individually.
+**It does not overwrite by default.** A file already in the destination is left
+alone and reported. `--overwrite` overrides it.
 
 ---
 
-## Until then
+## What is checked on the way out
 
-A full restore into a virtual machine gets a file back. Restore the backup onto
-a blank virtual disk, start the virtual machine, and copy the file out. It is
-slow and clumsy compared to a browser, but it works today and it uses the path
-that has the most testing behind it.
+Everything. Files come out through the chunk store, which decompresses each
+stored chunk and compares its BLAKE3 digest before returning it. A backup with a
+damaged chunk in it stops the copy with a message naming the chunk rather than
+writing a file that is quietly wrong.
+
+A file that is written is therefore the file that went in, or there is an error
+saying otherwise. A half written file is deleted rather than left looking
+finished.
+
+---
+
+## What cannot be read, and how it says so
+
+| | |
+|---|---|
+| **NTFS compressed files** | Not read. Handing back the stored clusters would hand back something that is not the file, so it is skipped and named |
+| **Encrypted files** (EFS) | Not read. The key lives in a Windows profile, not in the backup |
+| **Junctions and symbolic links** | Skipped unless asked for, as above |
+| **Sparse files** | Read correctly. The holes come out as zeros, which is what they are |
+| **Alternate data streams** | Read, and written beside the file as `name.stream-<name>`, because not every destination can hold a stream |
+| **Hard links** | Every name the file has appears in every folder that names it, which is what a hard link is |
+| **Unicode names** | Kept exactly, including names outside the basic multilingual plane |
+
+For a compressed file, restoring the whole disk gets it back exactly; the
+restore path reproduces the volume byte for byte and does not need to understand
+the contents.
+
+---
+
+## Paths out of a backup are not trusted
+
+Every name comes from somebody else's filesystem. Joining one onto a folder is
+the single place where "get my files back" can turn into "overwrite something
+else", so it has its own module with its own tests
+(`crates/mjolnir-files/src/safepath.rs`). Refused, with the reason:
+
+- anything that would climb out of the chosen folder: `..`, an absolute path, a
+  drive letter, a leading separator;
+- a name Windows reserves for a device, like `CON` or `LPT1`, in any case and
+  with any extension;
+- a name ending in a dot or a space, which Windows strips, so `secret.txt.`
+  cannot be used to land on `secret.txt`;
+- a character Windows forbids, including the colon, which would otherwise write
+  into an alternate data stream of an existing file.
+
+A refused name is reported rather than repaired. A file whose name could not be
+reproduced is something you should know about.
+
+---
+
+## How the tree is built
+
+By walking the master file table from end to end and asking each record what its
+parent is, rather than by walking the directory indexes.
+
+That is slower to start, and it is the right trade:
+
+- a file whose directory's index is damaged is still found, because the record
+  knows its own parent;
+- a file with several names in several directories appears in all of them.
+
+For a volume with a few hundred thousand files this takes a few seconds, and it
+happens once when the backup is opened. Browsing afterwards reads nothing.
+
+The reader is in `crates/mjolnir-ntfs`, works through
+`mjolnir_core::blockio::BlockSource`, and has no Windows in it, so it is tested
+against synthetic volumes on any machine.
+
+---
+
+## What has been proven, and what has not
+
+| | |
+|---|---|
+| Decoding file records, data runs, names, streams | Tested against synthetic structures, including every malformed shape |
+| Reading a volume out of a backup | Tested against a synthetic volume built for it |
+| Path safety | Tested against every refusal above |
+| Reading a **real** Windows volume out of a **real** backup | **Not done yet.** The harness for it is built and described in [`vm-testing.md`](vm-testing.md) |
