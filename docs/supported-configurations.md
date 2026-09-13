@@ -10,7 +10,7 @@ below is a real check with a test behind it, and every one explains itself.
 
 | | |
 |---|---|
-| Operating system | Windows 10 x64, Windows 11 x64 |
+| Operating system | Windows 10 x64 and Windows 11 x64 are what the code targets. **Only Windows 11 24H2 (build 26100) has been run.** Windows 10 has never been tested, and no Windows Server release has been tested or looked at |
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |

@@ -94,7 +94,8 @@ onto a blank replacement disk after the original has failed.
 
 ## Requirements
 
-- Windows 10 or Windows 11, 64 bit
+- Windows 10 or Windows 11, 64 bit. **Only Windows 11 24H2 has actually been
+  run**; Windows 10 is targeted but untested, and Windows Server is neither
 - A UEFI machine with a GPT system disk
 - One physical disk holding Windows
 - An external drive formatted NTFS, with room for the backup
@@ -153,7 +154,8 @@ BitLocker's state.
 ![The MjolnirVSS main window: Back up this PC, Restore files, Recovery media, Settings, Exit](docs/images/main-window.png)
 
 Five things. That is the whole window, and it is deliberate: the day you need a
-backup program is not the day to start reading its manual.
+backup program is not the day to start reading its manual. Each one says what it
+does, so nothing has to be guessed at or looked up.
 
 1. Plug in the external drive.
 2. Run `MjolnirVSS.exe`. Windows asks for permission; say yes.
@@ -164,7 +166,8 @@ backup program is not the day to start reading its manual.
 ![The backup screen, listing the disk and its four partitions, with a folder to save into and a name](docs/images/backup-screen.png)
 
 It shows you what it found before it does anything: the disk, every partition on
-it, and how much there is to read. **Start backup** stays greyed out until you
+it, how much there is to read, and any note worth having, such as a partition the
+shadow copy service will not handle. **Start backup** stays greyed out until you
 have chosen somewhere to put it, and it will not let that somewhere be the disk
 being copied.
 
