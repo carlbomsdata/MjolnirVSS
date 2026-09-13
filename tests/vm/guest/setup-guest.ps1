@@ -223,16 +223,27 @@ try {
         }
 
     # The alternate data stream has to be hashed by name, because it is not a
-    # file the directory enumeration returns.
+    # file the directory enumeration returns. Get-FileHash does not take a
+    # stream path: it returns nothing and does not throw, which once left this
+    # marker with an empty hash that every extracted byte then matched. The
+    # bytes are read and hashed directly instead.
     try {
-        $adsHash = (Get-FileHash -LiteralPath "${ads}:hidden" -Algorithm SHA256).Hash
+        $adsBytes = [byte[]] (Get-Content -LiteralPath $ads -Stream 'hidden' -Encoding Byte -ReadCount 0)
+        if (-not $adsBytes -or $adsBytes.Length -eq 0) {
+            throw 'the alternate data stream read back empty'
+        }
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $adsHash = ([System.BitConverter]::ToString($sha.ComputeHash($adsBytes)) -replace '-', '')
+        } finally { $sha.Dispose() }
         $records += [pscustomobject]@{
             path   = 'has-streams.txt:hidden'
-            length = (Get-Item -LiteralPath "${ads}:hidden" -Force).Length
+            length = $adsBytes.Length
             sha256 = $adsHash
         }
+        Report "alternate data stream: $($adsBytes.Length) bytes, $adsHash"
     } catch {
-        Report "could not hash the alternate data stream: $_"
+        throw "could not hash the alternate data stream: $_"
     }
 
     $manifest = [pscustomobject]@{

@@ -1023,9 +1023,26 @@ fn cmd_browse(
     if !index.unreadable.is_empty() {
         println!();
         println!(
-            "  {} records in this volume could not be read.",
-            index.unreadable.len()
+            "  {} of {} records in this volume could not be read:",
+            index.unreadable.len(),
+            index.records_scanned
         );
+        // A bare count says nothing about whether anybody's files are affected.
+        // Grouping by reason does: a volume whose unused records simply have no
+        // signature in them reads very differently from one with damage in it.
+        let mut reasons: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for (_, why) in &index.unreadable {
+            *reasons.entry(why.as_str()).or_default() += 1;
+        }
+        let mut by_count: Vec<(&&str, &usize)> = reasons.iter().collect();
+        by_count.sort_by(|a, b| b.1.cmp(a.1));
+        for (why, count) in by_count.iter().take(6) {
+            println!("    {count:>6}  {why}");
+        }
+        if by_count.len() > 6 {
+            println!("    and {} other reasons", by_count.len() - 6);
+        }
     }
     Ok(ExitCode::Success)
 }

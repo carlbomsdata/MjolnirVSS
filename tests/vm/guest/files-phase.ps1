@@ -109,8 +109,17 @@ try {
     $missing = 0
     $wrong = 0
     $skippedOnPurpose = 0
+    $unusable = 0
 
     foreach ($file in $markers.files) {
+        # A marker with no hash in it cannot decide anything, and comparing
+        # against one would pass whatever the extraction produced. That is a
+        # broken test, not a passing one.
+        if (-not $file.sha256) {
+            $unusable++
+            Report "NO EXPECTED HASH RECORDED: $($file.path)"
+            continue
+        }
         $relative = $file.path
         # The stream was written beside the file rather than as a stream.
         if ($relative -like '*:*') {
@@ -138,8 +147,10 @@ try {
         }
     }
 
-    Report "hashes matched: $matched, wrong: $wrong, missing: $missing, skipped on purpose: $skippedOnPurpose"
+    Report "hashes matched: $matched, wrong: $wrong, missing: $missing, skipped on purpose: $skippedOnPurpose, no expected hash: $unusable"
     if ($wrong -gt 0) { throw "$wrong extracted files did not match their hashes" }
+    if ($missing -gt 0) { throw "$missing files were neither extracted nor reported as skipped" }
+    if ($unusable -gt 0) { throw "$unusable markers had no hash recorded, so they proved nothing" }
     if ($matched -eq 0) { throw 'nothing was extracted and checked' }
 
     Report 'PHASE-FILES-COMPLETE'
