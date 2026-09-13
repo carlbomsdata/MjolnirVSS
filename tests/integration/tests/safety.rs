@@ -98,6 +98,194 @@ fn a_missing_chunk_is_caught_by_verification() {
 /// The partition table a restore writes comes from `disk_layout.json`, so an
 /// edit to that document would move a partition on somebody's new disk. It is
 /// covered by the same recorded digest as the manifest.
+/// Cancelling a backup while it is running stops it, and leaves nothing that a
+/// restore would accept.
+#[test]
+fn a_backup_cancelled_while_it_runs_leaves_nothing_usable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let disk = SyntheticDisk::windows_like(512);
+
+    let name = mjolnir_core::ids::BackupName::new("CANCEL_2026-01-01_1308").unwrap();
+    let mut writer = mjolnir_image::writer::BackupWriter::create(
+        tmp.path(),
+        &name,
+        mjolnir_image::manifest::BackupInfo {
+            uuid: "aaaabbbb-cccc-dddd-eeee-ffff00001111".to_owned(),
+            name: name.clone(),
+            created_utc: mjolnir_core::timestamp::UtcTimestamp::now().to_rfc3339(),
+            kind: mjolnir_image::manifest::BackupKind::Full,
+            scope: "system-disk".to_owned(),
+        },
+        mjolnir_image::manifest::SourceInfo {
+            machine_id: mjolnir_core::ids::MachineId::new("synthetic-pc").unwrap(),
+            computer_name: "SYNTHETIC-PC".to_owned(),
+            windows: Default::default(),
+            firmware: mjolnir_image::manifest::FirmwareMode::Uefi,
+        },
+        mjolnir_image::writer::WriterOptions::default(),
+    )
+    .unwrap();
+    let dir = writer.layout().dir().to_path_buf();
+
+    let cancel = CancelToken::new();
+    let mut progress = common::CancelAfter::new(&cancel, 3);
+    let spec =
+        common::capture_spec_for(&disk, mjolnir_image::manifest::CaptureMethod::RawFull, None);
+    let mut sources = common::SyntheticSources::new(&disk);
+
+    let err = mjolnir_backup::capture::capture_disk(
+        &spec,
+        &mut sources,
+        &mut writer,
+        &mut progress,
+        &cancel,
+    )
+    .expect_err("a cancelled backup must stop");
+    assert_eq!(err.exit(), ExitCode::Cancelled);
+
+    assert!(
+        BackupSet::open(&dir).is_err(),
+        "a cancelled backup must not open as a usable one"
+    );
+    assert!(!dir.join("completion.json").exists());
+}
+
+/// Cancelling a verification stops it. A person who starts checking a slow
+/// drive and changes their mind should not have to wait for the whole thing.
+#[test]
+fn a_verification_cancelled_while_it_runs_stops() {
+    let tmp = tempfile::tempdir().unwrap();
+    let disk = SyntheticDisk::windows_like(512);
+    let dir = back_up(&disk, tmp.path(), "VCANCEL_2026-01-01_1309").unwrap();
+
+    let set = BackupSet::open(&dir).unwrap();
+    let cancel = CancelToken::new();
+    let mut progress = common::CancelAfter::new(&cancel, 2);
+
+    let err = mjolnir_image::verify::verify(
+        set.manifest(),
+        Some(set.disk_layout()),
+        &set.chunk_store(),
+        VerifyDepth::Full,
+        &mut progress,
+        &cancel,
+    )
+    .expect_err("a cancelled verification must stop");
+    assert_eq!(err.exit(), ExitCode::Cancelled);
+}
+
+/// Cancelling a restore while it is writing stops it. The disk is left part
+/// written, which is unavoidable, and the operator is told so rather than being
+/// told it worked.
+#[test]
+fn a_restore_cancelled_while_it_writes_stops() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = SyntheticDisk::windows_like(512);
+    let dir = back_up(&source, tmp.path(), "RCANCEL_2026-01-01_1310").unwrap();
+
+    let set = BackupSet::open(&dir).unwrap();
+    let target = target_disk(1, source.size_bytes(), 512);
+    let plan = mjolnir_restore::plan(&set, &target).unwrap();
+    let confirmation = EraseConfirmation::check(&target, &target.erase_phrase()).unwrap();
+    let mut device = FileBlockDevice::create(
+        tmp.path().join("part-written.img"),
+        source.size_bytes(),
+        512,
+    )
+    .unwrap();
+
+    let cancel = CancelToken::new();
+    let mut progress = common::CancelAfter::new(&cancel, 3);
+
+    let err = mjolnir_restore::restore(
+        &set,
+        &plan,
+        &target,
+        &confirmation,
+        &mut device,
+        &mut progress,
+        &cancel,
+    )
+    .expect_err("a cancelled restore must stop");
+    assert_eq!(err.exit(), ExitCode::Cancelled);
+}
+
+/// The drive holding the backup goes away part way through writing it.
+///
+/// Simulated by making the place the chunks go into something that cannot be
+/// written to, which is the same thing every way a destination can fail looks
+/// like from inside: a write that does not work. What matters is not the cause
+/// but the result, which is that nothing is left behind that a restore would
+/// accept.
+#[test]
+fn a_backup_that_cannot_write_its_chunks_fails_and_leaves_nothing_usable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let disk = SyntheticDisk::build(
+        512,
+        16 * 1024 * 1024,
+        vec![
+            mjolnir_testkit::SyntheticPartition::efi(2 * 1024 * 1024),
+            mjolnir_testkit::SyntheticPartition::windows(8 * 1024 * 1024),
+        ],
+    );
+
+    let name = mjolnir_core::ids::BackupName::new("LOSTDEST_2026-01-01_1307").unwrap();
+    let mut writer = mjolnir_image::writer::BackupWriter::create(
+        tmp.path(),
+        &name,
+        mjolnir_image::manifest::BackupInfo {
+            uuid: "11112222-3333-4444-5555-666677778888".to_owned(),
+            name: name.clone(),
+            created_utc: mjolnir_core::timestamp::UtcTimestamp::now().to_rfc3339(),
+            kind: mjolnir_image::manifest::BackupKind::Full,
+            scope: "system-disk".to_owned(),
+        },
+        mjolnir_image::manifest::SourceInfo {
+            machine_id: mjolnir_core::ids::MachineId::new("synthetic-pc").unwrap(),
+            computer_name: "SYNTHETIC-PC".to_owned(),
+            windows: Default::default(),
+            firmware: mjolnir_image::manifest::FirmwareMode::Uefi,
+        },
+        mjolnir_image::writer::WriterOptions::default(),
+    )
+    .expect("the backup folder should be created");
+
+    let dir = writer.layout().dir().to_path_buf();
+    let chunks = writer.layout().chunk_root();
+
+    // From here on, nothing can be written where the chunks belong.
+    if chunks.exists() {
+        fs::remove_dir_all(&chunks).expect("the empty chunk folder should go");
+    }
+    fs::write(&chunks, b"this is not a folder").expect("something in the way");
+
+    let spec =
+        common::capture_spec_for(&disk, mjolnir_image::manifest::CaptureMethod::RawFull, None);
+    let mut sources = common::SyntheticSources::new(&disk);
+    let outcome = mjolnir_backup::capture::capture_disk(
+        &spec,
+        &mut sources,
+        &mut writer,
+        &mut SilentProgress,
+        &CancelToken::new(),
+    );
+
+    assert!(
+        outcome.is_err(),
+        "a backup that cannot write its chunks must fail rather than carry on"
+    );
+
+    // Whatever is left must never be mistaken for something restorable.
+    assert!(
+        BackupSet::open(&dir).is_err(),
+        "an abandoned backup folder must not open as a usable backup"
+    );
+    assert!(
+        !dir.join("completion.json").exists(),
+        "nothing may mark a failed backup complete"
+    );
+}
+
 #[test]
 fn an_edited_disk_layout_is_caught_by_its_recorded_digest() {
     let tmp = tempfile::tempdir().unwrap();

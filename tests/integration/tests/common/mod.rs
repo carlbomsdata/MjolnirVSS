@@ -282,3 +282,40 @@ pub fn verify_backup(backup_dir: &Path) -> VerifyReport {
     )
     .expect("verification should run")
 }
+
+/// Progress that pulls the plug part way through.
+///
+/// Cancelling before anything starts only proves the check at the door. This
+/// cancels after real work has been done, which is what somebody pressing
+/// Cancel actually does.
+pub struct CancelAfter {
+    cancel: CancelToken,
+    remaining: usize,
+}
+
+impl CancelAfter {
+    /// Cancels `token` after `updates` progress reports.
+    pub fn new(token: &CancelToken, updates: usize) -> Self {
+        Self {
+            cancel: token.clone(),
+            remaining: updates,
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.remaining == 0 {
+            self.cancel.cancel();
+        } else {
+            self.remaining -= 1;
+        }
+    }
+}
+
+impl mjolnir_core::progress::Progress for CancelAfter {
+    fn begin(&mut self, _phase: &str, _total: Option<u64>) {}
+    fn advance(&mut self, _bytes: u64) {
+        self.tick();
+    }
+    fn end(&mut self) {}
+    fn note(&mut self, _message: &str) {}
+}
