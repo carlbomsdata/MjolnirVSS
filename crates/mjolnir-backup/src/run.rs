@@ -566,11 +566,20 @@ impl crate::capture::CaptureSources for WindowsSources<'_> {
             .first()
             .map(|e| e.length)
             .unwrap_or(partition.partition.length);
-        let device = Device::open_read(
+        let mut device = Device::open_read(
             &device_path,
             self.plan.disk.logical_sector_size,
             extent_length,
         )?;
+
+        // What the volume extent says is the partition's length, and a shadow
+        // copy device is shorter than that: the last sector of the partition
+        // holds NTFS's spare boot sector and is outside the volume. Asking the
+        // device itself is the only way to find out where it really ends, and
+        // reading past it fails with "reached the end of the file".
+        if let Some(length) = device.query_length() {
+            device.set_geometry(0, length);
+        }
         Ok(Some(Box::new(device)))
     }
 

@@ -211,6 +211,33 @@ impl Device {
         Ok(returned)
     }
 
+    /// Asks the device how many bytes it will actually let you read.
+    ///
+    /// `IOCTL_DISK_GET_LENGTH_INFO` is the documented way, and it works on a
+    /// disk, a volume and a shadow copy device.
+    ///
+    /// This matters more than it sounds. A shadow copy device covers the
+    /// *volume*, and a volume is a little shorter than the partition holding
+    /// it: NTFS keeps a spare copy of its boot sector in the last sector of the
+    /// partition, outside the filesystem. Everything else reports the partition
+    /// length, so without asking the device itself, a reader walks off the end
+    /// of it and Windows says "reached the end of the file".
+    ///
+    /// Returns `None` when the device will not say, which is not a failure:
+    /// the caller then uses whatever length it already had.
+    pub fn query_length(&self) -> Option<u64> {
+        // CTL_CODE(IOCTL_DISK_BASE=7, 0x0017, METHOD_BUFFERED=0, FILE_ANY_ACCESS=0)
+        const IOCTL_DISK_GET_LENGTH_INFO: u32 = (7 << 16) | (0x0017 << 2);
+
+        let mut buffer = [0u8; 8];
+        let returned = self.control_optional(IOCTL_DISK_GET_LENGTH_INFO, &mut buffer)?;
+        if returned as usize != buffer.len() {
+            return None;
+        }
+        let length = u64::from_le_bytes(buffer);
+        (length > 0).then_some(length)
+    }
+
     /// Issues a control code whose result may not fit in one call.
     ///
     /// Returns the bytes written into `output` and whether more remain.
