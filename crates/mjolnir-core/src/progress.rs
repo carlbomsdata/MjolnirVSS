@@ -55,6 +55,8 @@ pub struct StderrProgress {
     last_paint: Instant,
     interactive: bool,
     painted: bool,
+    /// The last line written, so an unchanged one is not written twice.
+    last_body: String,
 }
 
 impl Default for StderrProgress {
@@ -77,6 +79,7 @@ impl StderrProgress {
             last_paint: Instant::now() - Duration::from_secs(60),
             interactive: std::io::stderr().is_terminal(),
             painted: false,
+            last_body: String::new(),
         }
     }
 
@@ -113,6 +116,10 @@ impl StderrProgress {
                     format_bytes(rate as u64)
                 )
             }
+            // A phase with no total and nothing counted yet is a step rather
+            // than a transfer. Printing "0 B at 0 B/s" for it says nothing and
+            // says it twice, once on begin and once on end.
+            _ if self.done == 0 => self.phase.clone(),
             _ => format!(
                 "{}: {} at {}/s",
                 self.phase,
@@ -120,6 +127,13 @@ impl StderrProgress {
                 format_bytes(rate as u64)
             ),
         };
+
+        // A phase that begins and ends without moving any bytes would
+        // otherwise print the same line twice, once for each.
+        if body == self.last_body {
+            return;
+        }
+        self.last_body = body.clone();
 
         let mut err = std::io::stderr().lock();
         if self.interactive {
@@ -141,6 +155,7 @@ impl Progress for StderrProgress {
         self.done = 0;
         self.started = Instant::now();
         self.last_paint = Instant::now() - Duration::from_secs(60);
+        self.last_body.clear();
         self.paint(true);
     }
 
