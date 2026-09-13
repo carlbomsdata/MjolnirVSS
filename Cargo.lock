@@ -457,12 +457,16 @@ dependencies = [
  "clap",
  "mjolnir-backup",
  "mjolnir-core",
+ "mjolnir-crypto",
  "mjolnir-files",
  "mjolnir-image",
  "mjolnir-media",
  "mjolnir-storage",
  "mjolnir-vss",
  "serde_json",
+ "tempfile",
+ "windows",
+ "zeroize",
 ]
 
 [[package]]

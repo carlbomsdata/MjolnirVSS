@@ -82,6 +82,8 @@ pub struct BackupRequest {
     pub scope: BackupScope,
     /// How much of each partition to capture.
     pub limit: CaptureLimit,
+    /// Keys to seal the contents with, when the backup is to be encrypted.
+    pub encryption: Option<mjolnir_image::writer::StartedEncryption>,
 }
 
 /// One partition, and how it is going to be captured.

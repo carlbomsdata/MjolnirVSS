@@ -653,6 +653,8 @@ impl BackupWindow {
             name: name.clone(),
             scope: mjolnir_backup::BackupScope::SystemDisk,
             limit: CaptureLimit::Everything,
+            // Planning only; nothing is written, so nothing is sealed.
+            encryption: None,
         };
 
         match mjolnir_backup::plan(&probe) {
@@ -754,6 +756,10 @@ impl BackupWindow {
             name,
             scope: mjolnir_backup::BackupScope::SystemDisk,
             limit: CaptureLimit::Everything,
+            // The window does not offer encryption yet: it is reachable from
+            // the command line only, and this says so rather than silently
+            // writing an unencrypted backup somebody believed was sealed.
+            encryption: None,
         };
 
         // Re-planned against the real destination, so the "not on the source

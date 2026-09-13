@@ -133,7 +133,10 @@ pub fn run(
         &request.name,
         backup,
         source,
-        WriterOptions::default(),
+        WriterOptions {
+            encryption: request.encryption.clone(),
+            ..Default::default()
+        },
     )?;
     let backup_dir = writer.layout().dir().to_path_buf();
     log.line(format!("Writing to {}", backup_dir.display()));

@@ -11,6 +11,8 @@
 
 #![warn(missing_docs)]
 
+pub mod password;
+
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -40,6 +42,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Read the password for an encrypted backup from this file.
+    ///
+    /// Without it, an encrypted backup is asked about at the console. The
+    /// password is deliberately not accepted as an argument, because arguments
+    /// are visible to anything that can list running processes.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub password_file: Option<PathBuf>,
+
     /// Do not print progress.
     #[arg(long, global = true)]
     pub quiet: bool,
@@ -67,6 +77,21 @@ pub enum Command {
         /// as a preview and can never be restored.
         #[arg(long, value_name = "BYTES")]
         preview: Option<u64>,
+
+        /// Encrypt the contents of the backup with a password.
+        ///
+        /// You are asked for it twice. It is never stored, and there is no way
+        /// to open the backup without it.
+        #[arg(long)]
+        encrypt: bool,
+
+        /// Read the password from this file instead of asking.
+        ///
+        /// For a scheduled backup, which has nobody to ask. The password is
+        /// deliberately not accepted as an argument: arguments are visible to
+        /// anything that can list processes.
+        #[arg(long, value_name = "FILE")]
+        password_file: Option<PathBuf>,
     },
 
     /// Check a backup: every chunk is decompressed and its digest compared.
@@ -199,11 +224,15 @@ pub fn run(cli: Cli) -> ExitCode {
             destination,
             name,
             preview,
+            encrypt,
+            password_file,
         } => cmd_backup(
             &cli,
             destination.clone(),
             name.clone(),
             *preview,
+            *encrypt,
+            password_file.clone(),
             progress.as_mut(),
             &cancel,
         ),
@@ -391,6 +420,8 @@ fn cmd_inspect(cli: &Cli) -> Result<ExitCode> {
         name: default_backup_name(&system.computer_name),
         scope: mjolnir_backup::BackupScope::SystemDisk,
         limit: mjolnir_backup::CaptureLimit::Everything,
+        // Inspecting only plans; nothing is written, so nothing is sealed.
+        encryption: None,
     };
     match mjolnir_backup::plan(&request) {
         Ok(plan) => {
@@ -429,11 +460,14 @@ fn cmd_inspect(_cli: &Cli) -> Result<ExitCode> {
 }
 
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 fn cmd_backup(
     cli: &Cli,
     destination: PathBuf,
     name: Option<String>,
     preview: Option<u64>,
+    encrypt: bool,
+    password_file: Option<PathBuf>,
     progress: &mut dyn Progress,
     cancel: &CancelToken,
 ) -> Result<ExitCode> {
@@ -450,6 +484,21 @@ fn cmd_backup(
         None => default_backup_name(&system.computer_name),
     };
 
+    // Asked for before anything is read or written, so a mistyped password
+    // costs a few seconds rather than a whole backup.
+    let encryption = if encrypt {
+        let source = crate::password::PasswordSource {
+            file: password_file,
+        };
+        let password = source.read_new()?;
+        Some(mjolnir_image::writer::StartedEncryption::begin(
+            &password,
+            mjolnir_crypto::KdfParams::default(),
+        )?)
+    } else {
+        None
+    };
+
     let request = mjolnir_backup::BackupRequest {
         destination,
         name,
@@ -458,6 +507,7 @@ fn cmd_backup(
             Some(bytes) => mjolnir_backup::CaptureLimit::FirstBytes(bytes),
             None => mjolnir_backup::CaptureLimit::Everything,
         },
+        encryption,
     };
 
     let plan = mjolnir_backup::plan(&request)?;
@@ -529,11 +579,14 @@ fn cmd_backup(
 }
 
 #[cfg(not(windows))]
+#[allow(clippy::too_many_arguments)]
 fn cmd_backup(
     _cli: &Cli,
     _destination: PathBuf,
     _name: Option<String>,
     _preview: Option<u64>,
+    _encrypt: bool,
+    _password_file: Option<PathBuf>,
     _progress: &mut dyn Progress,
     _cancel: &CancelToken,
 ) -> Result<ExitCode> {
@@ -547,7 +600,11 @@ fn cmd_verify(
     progress: &mut dyn Progress,
     cancel: &CancelToken,
 ) -> Result<ExitCode> {
-    let set = mjolnir_image::BackupSet::open_unchecked(&path)?;
+    // Unchecked on purpose: verify has to be able to look at a damaged backup
+    // and say what is wrong with it, which a strict open would refuse to do.
+    let mut set = mjolnir_image::BackupSet::open_unchecked(&path)?;
+    unlock_if_needed(cli, &mut set)?;
+    let set = set;
     let store = set.chunk_store();
 
     let report = mjolnir_image::verify::verify(
@@ -896,8 +953,30 @@ fn cmd_recovery_media(
     }
 }
 
+/// Opens a backup, asking for its password if it has one.
+///
+/// A backup that is not encrypted is never asked about, so nothing changes for
+/// anybody who does not use encryption.
+fn open_for_reading(cli: &Cli, path: &Path) -> Result<mjolnir_image::BackupSet> {
+    let mut set = mjolnir_image::BackupSet::open(path)?;
+    unlock_if_needed(cli, &mut set)?;
+    Ok(set)
+}
+
+/// Supplies the password when the backup has one.
+fn unlock_if_needed(cli: &Cli, set: &mut mjolnir_image::BackupSet) -> Result<()> {
+    if !set.is_encrypted() {
+        return Ok(());
+    }
+    let source = crate::password::PasswordSource {
+        file: cli.password_file.clone(),
+    };
+    let password = source.read("Password for this backup: ")?;
+    set.unlock(&password)
+}
+
 fn cmd_volumes(cli: &Cli, path: &Path) -> Result<ExitCode> {
-    let set = mjolnir_image::BackupSet::open(path)?;
+    let set = open_for_reading(cli, path)?;
     let volumes = mjolnir_files::volumes_in(&set);
 
     if cli.json {
@@ -940,7 +1019,7 @@ fn cmd_browse(
     folder: &str,
     cancel: &CancelToken,
 ) -> Result<ExitCode> {
-    let set = mjolnir_image::BackupSet::open(path)?;
+    let set = open_for_reading(cli, path)?;
     let stream = mjolnir_files::stream_in(&set, volume)?;
     let open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
     let index = open.index();
@@ -1069,7 +1148,7 @@ fn cmd_extract(
         ));
     }
 
-    let set = mjolnir_image::BackupSet::open(path)?;
+    let set = open_for_reading(cli, path)?;
     let stream = mjolnir_files::stream_in(&set, volume)?;
     let mut open = mjolnir_files::OpenVolume::open(&set, stream, cancel)?;
 
@@ -1146,6 +1225,81 @@ fn not_windows() -> Error {
 
 #[cfg(test)]
 mod tests {
+
+    /// Encryption has to be asked for. A backup is not encrypted by accident,
+    /// and not unencrypted by accident either.
+    #[test]
+    fn a_backup_is_not_encrypted_unless_asked() {
+        let cli = Cli::try_parse_from(["MjolnirVSS.exe", "backup", "--destination", "D:/b"])
+            .expect("backup should parse");
+        match cli.command {
+            Command::Backup { encrypt, .. } => assert!(!encrypt),
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_encrypt_flag_parses() {
+        let cli = Cli::try_parse_from([
+            "MjolnirVSS.exe",
+            "backup",
+            "--destination",
+            "D:/b",
+            "--encrypt",
+        ])
+        .expect("--encrypt should parse");
+        match cli.command {
+            Command::Backup { encrypt, .. } => assert!(encrypt),
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    /// The password must never be accepted as an argument: arguments are
+    /// visible to anything that can list processes.
+    #[test]
+    fn a_password_cannot_be_passed_as_an_argument() {
+        assert!(
+            Cli::try_parse_from([
+                "MjolnirVSS.exe",
+                "backup",
+                "--destination",
+                "D:/b",
+                "--password",
+                "hunter2",
+            ])
+            .is_err(),
+            "there must be no --password argument"
+        );
+    }
+
+    /// A file works instead, for a run with nobody to ask.
+    #[test]
+    fn a_password_file_can_be_given_to_any_command() {
+        for args in [
+            vec![
+                "MjolnirVSS.exe",
+                "verify",
+                "D:/b",
+                "--password-file",
+                "k.txt",
+            ],
+            vec![
+                "MjolnirVSS.exe",
+                "volumes",
+                "D:/b",
+                "--password-file",
+                "k.txt",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args.clone())
+                .unwrap_or_else(|e| panic!("{args:?} should parse: {e}"));
+            assert_eq!(
+                cli.password_file,
+                Some(PathBuf::from("k.txt")),
+                "{args:?} should carry the password file"
+            );
+        }
+    }
     use super::*;
     use clap::CommandFactory;
 
@@ -1163,6 +1317,7 @@ mod tests {
                 destination,
                 name,
                 preview,
+                ..
             } => {
                 assert_eq!(destination, PathBuf::from("E:\\Backups"));
                 assert!(name.is_none());
