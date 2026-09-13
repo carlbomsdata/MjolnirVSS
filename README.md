@@ -4,7 +4,10 @@ Portable bare metal backup and recovery for Windows 10 and Windows 11.
 
 ---
 
-## Status: early. Tested in virtual machines, never on real hardware.
+## Status: `0.1.0-alpha.1`. Tested in virtual machines, never on real hardware.
+
+What changed, and what this alpha does and does not do:
+[`CHANGELOG.md`](CHANGELOG.md).
 
 **A restored Windows has now been booted from a MjolnirVSS backup.** On
 13 September 2026, in a disposable VMware virtual machine: a live backup of a
@@ -19,10 +22,14 @@ unique identifier, offset and size, the EFI partition held its boot files, the
 boot configuration named the Windows loader, and the Windows Recovery
 Environment was still registered.
 
-That is one machine, once, and it was a virtual one. **No real computer has been
-restored.** Firmware differs, disks differ, and a virtual NVMe disk is not a
-Samsung one. Treat MjolnirVSS as something to test on a machine you can afford
-to lose, and keep another backup.
+That cycle has since been run many times over: onto a disk the same size and a
+larger one, from an encrypted backup, from a BitLocker protected machine, and
+after a restore was deliberately broken so the boot repair had to be the thing
+that fixed it. Every one of them was a virtual machine.
+
+**No real computer has been restored.** Firmware differs, disks differ, and a
+virtual NVMe disk is not a Samsung one. Treat MjolnirVSS as something to test on
+a machine you can afford to lose, and keep another backup.
 
 What that means in practice is set out honestly below, feature by feature.
 
@@ -71,9 +78,10 @@ onto a blank replacement disk after the original has failed.
 | Restoring onto a blank disk | **Implemented**, done from real recovery media onto blank virtual disks of the same size and of a larger size, and both booted |
 | Rebuilding the partition table on the replacement disk | **Implemented**, and the restored table checked partition by partition against the original |
 | Refusing unsafe restore targets | **Implemented and tested** |
+| Stopping cleanly with Ctrl+C | **Implemented and proven**: a real backup interrupted mid copy exits `9 cancelled`, releases the shadow copy it was holding, and leaves nothing marked complete |
 | Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |
 | Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore with no mouse at all |
-| **Booting a restored Windows** | **Done once, in a virtual machine.** Never on real hardware |
+| **Booting a restored Windows** | **Done repeatedly, in virtual machines**: same size disk and larger, plain and encrypted, and once only because the boot repair fixed it. Never on real hardware |
 | Repairing UEFI boot configuration after a restore | **Implemented and proven.** A restored disk was deliberately broken so it would not start, and the repair is what made it start again |
 | Restoring individual files from a backup | **Implemented**, proven against a real Windows volume out of a real backup |
 | Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
