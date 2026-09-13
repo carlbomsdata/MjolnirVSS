@@ -49,6 +49,20 @@ const ID_EXIT: i32 = 2010;
 const TIMER_PROGRESS: usize = 1;
 const TIMER_INTERVAL: u32 = 200;
 
+/// Where a step puts the keyboard.
+///
+/// A small type rather than a control handle on purpose: the read only body is
+/// not one of these, so no step can hand it the keyboard by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    /// The list, where there is something to choose.
+    List,
+    /// The box the erase phrase is typed into.
+    Confirmation,
+    /// The button that goes on.
+    NextButton,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     FindBackup,
@@ -69,6 +83,49 @@ impl Step {
             Step::Restoring => "Step 5 of 5:  Restoring",
             Step::Completed => "Finished",
         }
+    }
+
+    /// Where the keyboard goes when this step appears.
+    ///
+    /// Every step names a control the operator acts on. Leaving it to the tab
+    /// order put the keyboard in the read only body, and a multiline edit tells
+    /// Windows it wants the Return key, so Return did nothing at all: the
+    /// window looked operable and would not advance. That was found by running
+    /// this in Windows PE, where there is no mouse to reach for.
+    fn focus(self) -> Focus {
+        match self {
+            Step::SelectBackup | Step::SelectTarget => Focus::List,
+            Step::Review => Focus::Confirmation,
+            Step::FindBackup | Step::Restoring | Step::Completed => Focus::NextButton,
+        }
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::{Focus, Step};
+
+    /// Every step a person has to act on hands the keyboard to the thing they
+    /// act on, and a step showing a list hands it to the list.
+    #[test]
+    fn every_step_puts_the_keyboard_somewhere_it_can_be_used() {
+        for (step, expected) in [
+            (Step::FindBackup, Focus::NextButton),
+            (Step::SelectBackup, Focus::List),
+            (Step::SelectTarget, Focus::List),
+            (Step::Review, Focus::Confirmation),
+            (Step::Restoring, Focus::NextButton),
+            (Step::Completed, Focus::NextButton),
+        ] {
+            assert_eq!(step.focus(), expected, "{step:?}");
+        }
+    }
+
+    /// The step that erases a disk is the one that must be operable without a
+    /// mouse, because it is the one somebody reaches in a recovery environment.
+    #[test]
+    fn the_step_that_erases_a_disk_focuses_the_phrase_that_permits_it() {
+        assert_eq!(Step::Review.focus(), Focus::Confirmation);
     }
 }
 
@@ -204,6 +261,23 @@ impl RecoveryWindow {
 
         self.layout(window);
         self.invalidate(window);
+        self.take_focus(window, step);
+    }
+
+    /// Puts the keyboard where the operator's next action is.
+    ///
+    /// Without this the first control in the tab order takes focus, which is
+    /// the read only body. A multiline edit control tells Windows it wants the
+    /// Return key, so Return would land there and do nothing: the window would
+    /// look operable and refuse to advance. Found by running this in Windows
+    /// PE, where there is no mouse to fall back on.
+    fn take_focus(&mut self, window: &Window, step: Step) {
+        let target = match step.focus() {
+            Focus::List => self.controls.list,
+            Focus::Confirmation => self.controls.confirm_edit,
+            Focus::NextButton => self.controls.next,
+        };
+        window.focus(target);
     }
 
     fn enter_find(&mut self) {
