@@ -27,7 +27,12 @@ fn main() -> std::process::ExitCode {
     }
 
     #[cfg(windows)]
-    mjolnir_win32_ui::console::attach_to_parent();
+    {
+        mjolnir_win32_ui::console::attach_to_parent();
+        // Before any work starts, so that a Ctrl+C during a backup releases the
+        // shadow copy rather than abandoning it on the volume.
+        mjolnir_win32_ui::console::install_cancel_handler();
+    }
 
     let code = mjolnir_cli::run_from_args(args);
     std::process::ExitCode::from(code.code() as u8)

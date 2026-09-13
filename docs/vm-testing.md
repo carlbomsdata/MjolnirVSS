@@ -194,6 +194,8 @@ Each phase is a script the guest runs, reporting over the serial port.
 | `setup-guest.ps1` | The source machine exists, with files chosen to exercise fragmentation, sparse files, NTFS compression, Unicode names, alternate data streams, hard links and reparse points, each with a recorded hash |
 | `backup-phase.ps1` | A live backup of a running Windows completes, verifies, and a damaged copy of it is refused |
 | `files-phase.ps1` | Files come back out of the backup with the bytes they went in with, checked against the recorded hashes |
+| `cancel-phase.ps1` | A real Ctrl+C during a real backup stops it at `9 cancelled`, releases the shadow copy, and leaves nothing marked complete |
+| `bitlocker-phase.ps1` | Turns BitLocker on in the source machine, so the backup phases can be run again against an encrypted Windows |
 
 The restore phase runs in the recovery machine, from the recovery media, and is
 the one the whole thing exists for.

@@ -207,8 +207,9 @@ where
 
 /// Runs a parsed command line and returns the process exit code.
 pub fn run(cli: Cli) -> ExitCode {
-    let cancel = CancelToken::new();
-    install_cancel_handler(&cancel);
+    // The one token the console control handler cancels. Taking it from here
+    // rather than making a new one is what connects Ctrl+C to the copy loop.
+    let cancel = mjolnir_core::cancel::process_token().clone();
 
     let mut progress: Box<dyn Progress> = if cli.quiet || cli.json {
         Box::new(SilentProgress)
@@ -289,19 +290,6 @@ pub fn report_error(e: &Error) {
     eprintln!("  What to do next: {}", e.next_step());
     eprintln!();
     eprintln!("  (exit code {} - {})", e.exit().code(), e.exit().name());
-}
-
-fn install_cancel_handler(cancel: &CancelToken) {
-    // Ctrl+C sets the flag instead of killing the process, so the shadow copy
-    // is released and no half written chunk is left behind.
-    let cancel = cancel.clone();
-    let _ = std::thread::Builder::new()
-        .name("mjolnir-cancel".to_owned())
-        .spawn(move || {
-            // A real console handler is installed by the application crate; this
-            // keeps the token alive for the duration of the run.
-            let _ = &cancel;
-        });
 }
 
 #[cfg(windows)]

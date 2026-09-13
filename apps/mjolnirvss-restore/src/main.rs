@@ -31,6 +31,9 @@ fn main() -> std::process::ExitCode {
     #[cfg(windows)]
     {
         mjolnir_win32_ui::console::attach_to_parent();
+        // Before any work starts, so that a Ctrl+C during a restore stops
+        // between blocks instead of in the middle of writing one.
+        mjolnir_win32_ui::console::install_cancel_handler();
         let code = cli::run_from_args(args);
         std::process::ExitCode::from(code.code() as u8)
     }

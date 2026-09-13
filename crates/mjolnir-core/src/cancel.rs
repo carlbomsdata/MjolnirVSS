@@ -7,7 +7,7 @@
 //! out.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A shared cancellation flag.
 ///
@@ -46,6 +46,29 @@ impl CancelToken {
     }
 }
 
+/// The one token a Ctrl+C cancels.
+///
+/// A console control handler runs on a thread the operating system injects,
+/// with no way to be handed anything, so the token it cancels has to be
+/// reachable from nowhere in particular. Every entry point takes its token from
+/// here rather than making its own, so that the handler and the copy loop are
+/// certain to be looking at the same flag.
+///
+/// The handler itself lives in the graphical crate, which is where the console
+/// is dealt with; this side is deliberately free of any platform code.
+pub fn process_token() -> &'static CancelToken {
+    static PROCESS: OnceLock<CancelToken> = OnceLock::new();
+    PROCESS.get_or_init(CancelToken::new)
+}
+
+/// Requests cancellation of [`process_token`].
+///
+/// Written to be callable from a console control handler: it takes no
+/// arguments, allocates nothing after the first call, and cannot fail.
+pub fn cancel_process() {
+    process_token().cancel();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +95,24 @@ mod tests {
         let b = a.clone();
         std::thread::spawn(move || b.cancel()).join().unwrap();
         assert!(a.is_cancelled());
+    }
+
+    #[test]
+    fn the_process_token_is_one_token() {
+        // Two calls have to be the same flag, or a handler would cancel
+        // something the copy loop is not watching.
+        let a = process_token();
+        let b = process_token();
+        assert!(std::ptr::eq(a, b));
+    }
+
+    #[test]
+    fn cancelling_the_process_is_seen_through_a_clone() {
+        // The handler cancels the static; the copy loop holds a clone. This is
+        // the path a Ctrl+C actually takes.
+        let held = process_token().clone();
+        cancel_process();
+        assert!(held.is_cancelled(), "a clone must see the handler's flag");
+        assert!(process_token().check().is_err());
     }
 }

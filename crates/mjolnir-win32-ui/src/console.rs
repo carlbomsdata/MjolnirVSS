@@ -160,6 +160,86 @@ pub fn release_own_console() {
 #[cfg(not(windows))]
 pub fn release_own_console() {}
 
+/// Makes Ctrl+C release the shadow copy instead of abandoning it.
+///
+/// Without this, Ctrl+C during a backup runs the default handler, which ends
+/// the process where it stands. No destructor runs, so the temporary shadow
+/// copy stays on the volume until the Volume Shadow Copy service times it out,
+/// and a half written chunk is left in the destination folder. That is the
+/// exact outcome [`mjolnir_core::cancel`] exists to prevent, and the flag it
+/// describes was never being set by anything until this was installed.
+///
+/// The first Ctrl+C sets the flag and lets the copy loop unwind: it finishes
+/// the chunk it is on, the guards release the snapshot on the way out, and the
+/// process exits reporting that it was cancelled. That takes as long as one
+/// chunk, which is long enough for somebody to conclude nothing happened, so
+/// the handler says what it is doing.
+///
+/// **A second Ctrl+C is passed through** to the default handler, which kills
+/// the process immediately. Somebody pressing it twice has decided they want
+/// out now, and refusing would be worse than the shadow copy they are choosing
+/// to leave behind. The message says what that costs before they do it.
+///
+/// Closing the console window, logging off and shutting down set the flag as
+/// well, but Windows allows only a few seconds before terminating the process
+/// regardless, so cleanliness there is an attempt rather than a promise.
+///
+/// Silent and harmless when the process has no console, which is the normal
+/// case in the graphical interface and in Windows PE.
+#[cfg(windows)]
+pub fn install_cancel_handler() {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT,
+        CTRL_SHUTDOWN_EVENT,
+    };
+
+    static ASKED_ONCE: AtomicBool = AtomicBool::new(false);
+
+    /// Called by the operating system on a thread of its own.
+    ///
+    /// Returning true means handled and the process keeps running; returning
+    /// false hands the event to the default handler, which ends it.
+    unsafe extern "system" fn handler(event: u32) -> windows::core::BOOL {
+        match event {
+            CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+                if ASKED_ONCE.swap(true, Ordering::SeqCst) {
+                    // Second press: let the default handler have it.
+                    return false.into();
+                }
+                mjolnir_core::cancel::cancel_process();
+                // Written straight to the handle rather than through the
+                // progress bar, which belongs to the thread being cancelled.
+                let mut err = std::io::stderr().lock();
+                let _ = writeln!(err);
+                let _ = writeln!(err, "Cancelling. Finishing the block being copied, then releasing the temporary shadow copy.");
+                let _ = writeln!(err, "Press Ctrl+C again to stop at once, which leaves the shadow copy for Windows to clean up.");
+                let _ = err.flush();
+                true.into()
+            }
+            CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT => {
+                // Windows gives a few seconds at most. Ask, and hope.
+                mjolnir_core::cancel::cancel_process();
+                true.into()
+            }
+            _ => false.into(),
+        }
+    }
+
+    // SAFETY: the function pointer has the signature the API documents and
+    // points at code in this binary, which outlives the process's use of it.
+    // Registration either succeeds or fails, and a failure only means Ctrl+C
+    // keeps its default behaviour, so there is nothing to recover from.
+    unsafe {
+        let _ = SetConsoleCtrlHandler(Some(handler), true);
+    }
+}
+
+/// Does nothing on platforms without a Windows console.
+#[cfg(not(windows))]
+pub fn install_cancel_handler() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +251,17 @@ mod tests {
         attach_to_parent();
         attach_to_parent();
         println!("still able to print after attaching");
+    }
+
+    #[test]
+    fn installing_the_cancel_handler_twice_is_harmless() {
+        // Both applications install it, and a second installation must not
+        // panic or cancel anything by itself.
+        install_cancel_handler();
+        install_cancel_handler();
+        assert!(
+            !mjolnir_core::cancel::process_token().is_cancelled(),
+            "installing a handler must not cancel anything"
+        );
     }
 }

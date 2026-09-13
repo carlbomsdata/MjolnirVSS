@@ -118,7 +118,9 @@ where
 }
 
 fn run(cli: Cli) -> ExitCode {
-    let cancel = CancelToken::new();
+    // Shared with the console control handler, so Ctrl+C during a restore
+    // stops between blocks rather than in the middle of one.
+    let cancel = mjolnir_core::cancel::process_token().clone();
     let mut progress: Box<dyn Progress> = if cli.json {
         Box::new(SilentProgress)
     } else {
