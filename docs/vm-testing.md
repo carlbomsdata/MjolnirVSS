@@ -110,10 +110,14 @@ simply becomes interactive.
 Windows PE pass do not suppress the region and keyboard pages. They need a
 `Microsoft-Windows-International-Core` component in the `oobeSystem` pass.
 
-**The guest keyboard is not the host keyboard.** Key events are sent as keysyms
-and translated through the guest's layout, so on a `en-GB` guest a backslash
-arrives as `#` and a pipe as `~`. The guest scripts are run with forward slash
-paths, which PowerShell accepts.
+**The guest keyboard is not the host keyboard.** A VNC key event names a
+keysym, and the guest translates it through its own layout, so the character
+that arrives is the one in that *position* on the guest's keyboard rather than
+the one asked for. On the `en-GB` guest this machine installs, a backslash
+arrives as `#`, a pipe as `~`, and a double quote as `@`. Commands typed into
+the guest therefore use forward slash paths, which PowerShell accepts, and no
+quotes at all. Anything that needs quoting goes into a script on the payload
+disc instead of being typed.
 
 ---
 
@@ -132,6 +136,23 @@ disk, which is safe for the same reason the boot partitions are.
 a shadow copy device reports the whole partition, and reads past the end of the
 filesystem inside it still fail. The filesystem's own boot sector is asked
 instead.
+
+**A shadow copy covers whole clusters, not whole sectors.** Asking the boot
+sector was still not enough. A volume's own count of sectors can end part way
+through a cluster, and the shadow copy stops at the last *complete* cluster. The
+failure was a read at offset 67,423,432,704, which is exactly 16,460,799 × 4096:
+one cluster short of what the filesystem claims. MjolnirVSS now reads at most
+`total_clusters × bytes_per_cluster` through the snapshot and takes the rest
+from the disk.
+
+**The browser decided what a partition held by reading a note.** The list of
+volumes to browse came from the filesystem name Windows recorded at backup time.
+Windows does not always record one: a volume it never mounted has no drive
+letter and no reported filesystem, and the backup of it would have been listed
+as unbrowsable even though the NTFS inside it reads perfectly. It now reads the
+partition's first sector out of the backup and decides from that, which also
+lets it say "this partition is BitLocker encrypted in the backup" instead of
+failing to open something it was told was NTFS.
 
 ---
 
