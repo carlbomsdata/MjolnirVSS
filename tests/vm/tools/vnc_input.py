@@ -149,13 +149,24 @@ def type_text(sock, text: str, delay: float = 0.03) -> None:
 
 
 def click(sock, x: int, y: int, button: int = 1) -> None:
-    """Moves the pointer and clicks."""
+    """Moves the pointer and clicks.
+
+    The move is sent on its own first and given time to land, because a button
+    press that arrives in the same breath as the move is treated by some
+    windows as a press somewhere else entirely. The press is then held for a
+    tenth of a second: Windows Setup and the Server Manager dialogs ignored a
+    press and release fifty milliseconds apart, which looked like the click
+    being delivered to nothing at all.
+    """
     mask = 1 << (button - 1)
     sock.sendall(struct.pack(">BBHH", MSG_POINTER_EVENT, 0, x, y))
-    time.sleep(0.05)
-    sock.sendall(struct.pack(">BBHH", MSG_POINTER_EVENT, mask, x, y))
-    time.sleep(0.05)
+    time.sleep(0.3)
     sock.sendall(struct.pack(">BBHH", MSG_POINTER_EVENT, 0, x, y))
+    time.sleep(0.1)
+    sock.sendall(struct.pack(">BBHH", MSG_POINTER_EVENT, mask, x, y))
+    time.sleep(0.12)
+    sock.sendall(struct.pack(">BBHH", MSG_POINTER_EVENT, 0, x, y))
+    time.sleep(0.1)
 
 
 def main() -> int:
