@@ -185,6 +185,29 @@ failing to open something it was told was NTFS.
 
 ---
 
+## Windows Server, and two things that waste an hour
+
+Server 2025 installs from the same harness, with two differences worth knowing
+before hunting for a fault that is not there.
+
+**The redesigned Setup asks two questions no answer file suppresses.** Server
+2025 and the other new Setup media ask for a language and a keyboard before
+they look at `autounattend.xml`. Press Return twice at the console; everything
+after that - image, licence, partitioning, account - is unattended as written.
+The first time this happened it looked as though the answer file was being
+ignored entirely. It was not.
+
+**Server Manager opens itself and takes the keyboard**, seconds after the first
+logon, which swallows whatever is being typed at the time. Close it first.
+
+**The Start menu offers the 32 bit PowerShell first.** Searching for
+`powershell` on Server hands back *Windows PowerShell (x86)*, and a 32 bit shell
+gets WOW64 file system redirection: `C:\Windows\System32` is not what it says
+it is, so `vssadmin` and `reagentc` are not where the script looks. Start the
+64 bit one explicitly through `$env:WINDIR\sysnative`.
+
+---
+
 ## The phases
 
 Each phase is a script the guest runs, reporting over the serial port.
