@@ -46,6 +46,21 @@ fn run_gui() -> std::process::ExitCode {
     match window::run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
+            // The console was released before the window was built, so on a
+            // machine where the window cannot be built at all - Server Core is
+            // the case this was written for - the message box is the only place
+            // the failure could appear, and that is the one thing such a
+            // machine may also be unable to show. Take the console back and say
+            // it there too, so the answer is never silence and an exit code.
+            mjolnir_win32_ui::console::attach_to_parent();
+            eprintln!();
+            eprintln!("MjolnirVSS could not open its window.");
+            eprintln!();
+            eprintln!("  What happened: {}", e.what());
+            eprintln!("  Why it matters: {}", e.why());
+            eprintln!("  What to do next: {}", e.next_step());
+            eprintln!();
+            eprintln!("  Run MjolnirVSS.exe --help for the commands, which need no window.");
             mjolnir_win32_ui::message_box::error("MjolnirVSS", &e);
             std::process::ExitCode::from(e.exit().code() as u8)
         }

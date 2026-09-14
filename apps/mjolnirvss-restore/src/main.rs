@@ -50,6 +50,19 @@ fn run_gui() -> std::process::ExitCode {
     match window::run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
+            // Somebody standing in a recovery environment in front of a machine
+            // that will not start needs the reason, not a window that never
+            // appeared. The console underneath is always there in Windows PE.
+            mjolnir_win32_ui::console::attach_to_parent();
+            eprintln!();
+            eprintln!("MjolnirVSS Recovery could not open its window.");
+            eprintln!();
+            eprintln!("  What happened: {}", e.what());
+            eprintln!("  Why it matters: {}", e.why());
+            eprintln!("  What to do next: {}", e.next_step());
+            eprintln!();
+            eprintln!("  The same restore can be done from this prompt; run");
+            eprintln!("  MjolnirVSS.Restore.exe --help for the commands.");
             mjolnir_win32_ui::message_box::error("MjolnirVSS Recovery", &e);
             std::process::ExitCode::from(e.exit().code() as u8)
         }
