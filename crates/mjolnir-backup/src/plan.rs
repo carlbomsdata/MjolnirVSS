@@ -345,6 +345,15 @@ pub fn plan(request: &BackupRequest) -> Result<BackupPlan> {
         warnings.push(warning);
     }
 
+    if let Some(warning) = note_disks_not_captured(
+        disk.number,
+        &request.destination,
+        &mjolnir_storage::disks::enumerate_disks(),
+        &volumes,
+    ) {
+        warnings.push(warning);
+    }
+
     if request.limit.is_preview() {
         warnings.push(
             "This is a preview run: only the first part of each partition is captured, and the result cannot be restored."
@@ -486,6 +495,65 @@ fn check_partition_is_supported(
     }
 
     Ok(())
+}
+
+/// Names the disks this backup will not touch.
+///
+/// MjolnirVSS backs up the system disk. On a workstation that is usually the
+/// whole machine, and saying so would be noise. On a server it very often is
+/// not: the data lives on a second disk, and somebody who has just watched a
+/// backup finish has every reason to believe their server is backed up.
+///
+/// So any other disk carrying a filesystem is named, once, in the warnings. The
+/// destination is left out, because a drive being written to is plainly not
+/// being backed up, and so is any disk with nothing on it, because crying about
+/// a blank disk teaches people to ignore this.
+fn note_disks_not_captured(
+    system_disk_number: u32,
+    destination: &Path,
+    disks: &[PhysicalDisk],
+    volumes: &[VolumeInfo],
+) -> Option<String> {
+    let destination_disk = disk_number_for_path(destination, volumes);
+
+    let mut missed = Vec::new();
+    for disk in disks {
+        if disk.number == system_disk_number || Some(disk.number) == destination_disk {
+            continue;
+        }
+        let held: Vec<&VolumeInfo> = volumes
+            .iter()
+            .filter(|v| {
+                v.filesystem.is_some() && v.extents.iter().any(|e| e.disk_number == disk.number)
+            })
+            .collect();
+        if held.is_empty() {
+            continue;
+        }
+        let names: Vec<String> = held
+            .iter()
+            .map(|v| match (v.drive_letter(), v.label.as_deref()) {
+                (Some(letter), Some(label)) if !label.is_empty() => format!("{letter}: {label}"),
+                (Some(letter), _) => format!("{letter}:"),
+                (None, Some(label)) if !label.is_empty() => label.to_owned(),
+                _ => "an unnamed volume".to_owned(),
+            })
+            .collect();
+        missed.push(format!(
+            "disk {} ({}, holding {})",
+            disk.number,
+            mjolnir_core::progress::format_bytes(disk.size_bytes),
+            names.join(", ")
+        ));
+    }
+
+    if missed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "This backs up the system disk only. Not included: {}. Anything on those disks is not in this backup.",
+        missed.join("; ")
+    ))
 }
 
 /// Free space below which a destination cannot hold a backup of anything.
@@ -1139,5 +1207,56 @@ mod tests {
                 .expect("a share is not refused")
                 .is_none()
         );
+    }
+    /// The server case: data lives on a second disk, and a backup of the system
+    /// disk alone is not a backup of the server. It has to say so.
+    #[test]
+    fn a_data_disk_is_named_as_not_being_backed_up() {
+        let mut data = volume(Some("D"), 2, 0, "NTFS");
+        data.label = Some("Data".to_owned());
+        let volumes = vec![
+            volume(Some("C"), 0, 1 << 20, "NTFS"),
+            volume(Some("E"), 1, 0, "NTFS"),
+            data,
+        ];
+        let disks = [disk(0), disk(1), disk(2)];
+
+        let warning = note_disks_not_captured(0, Path::new("E:\\Backups"), &disks, &volumes)
+            .expect("a data disk must be named");
+        assert!(warning.contains("disk 2"), "{warning}");
+        assert!(warning.contains("D: Data"), "{warning}");
+        assert!(
+            !warning.contains("disk 1"),
+            "the destination is not missing data: {warning}"
+        );
+        assert!(
+            !warning.contains("disk 0"),
+            "the system disk is the one being backed up: {warning}"
+        );
+    }
+
+    /// A machine with one disk must not be nagged about nothing.
+    #[test]
+    fn a_single_disk_machine_is_told_nothing() {
+        let volumes = vec![volume(Some("C"), 0, 1 << 20, "NTFS")];
+        assert!(
+            note_disks_not_captured(0, Path::new("E:\\Backups"), &[disk(0)], &volumes).is_none()
+        );
+    }
+
+    /// A blank disk holds nothing to lose. Warning about it would teach people
+    /// to ignore the warning that matters.
+    #[test]
+    fn a_disk_with_no_filesystem_is_not_mentioned() {
+        let mut blank = volume(None, 2, 0, "NTFS");
+        blank.filesystem = None;
+        let volumes = vec![volume(Some("C"), 0, 1 << 20, "NTFS"), blank];
+        assert!(note_disks_not_captured(
+            0,
+            Path::new("E:\\Backups"),
+            &[disk(0), disk(2)],
+            &volumes
+        )
+        .is_none());
     }
 }
