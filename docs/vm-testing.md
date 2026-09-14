@@ -218,6 +218,25 @@ it is, so `vssadmin` and `reagentc` are not where the script looks. Start the
 
 ---
 
+## Windows does not agree with itself about junctions
+
+Server 2019 reported a file missing that had in fact been recovered. The file
+was `behind-the-junction.bin`, recovered under its real name in `target\`, and
+reported missing under `junction\`, which is the same directory reached through
+a junction.
+
+The cause was in the harness, not the product. `Get-ChildItem -Recurse`
+**descends into a junction on Windows 10 and Server 2019, and does not on
+Windows 11 and Server 2025**, so the recorded markers differed by machine.
+MjolnirVSS refuses to follow a junction when copying files out, and says so, and
+is right to: following one copies a part of the volume nobody asked for.
+
+`setup-guest.ps1` now prunes reparse points from the walk explicitly, so the
+markers are the same set on every Windows. It is worth knowing that this class
+of difference exists, because it looks exactly like a recovery bug.
+
+---
+
 ## The phases
 
 Each phase is a script the guest runs, reporting over the serial port.

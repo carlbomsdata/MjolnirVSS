@@ -205,11 +205,38 @@ try {
 
     # ---- record what is there -------------------------------------------
     Report 'hashing the test files'
+
+    # Directories that are reparse points, by their path under the test root.
+    #
+    # Anything underneath one of them is data that already has a real name
+    # somewhere else, and MjolnirVSS deliberately refuses to follow a junction
+    # when it copies files out. Recording a marker behind one asks the file
+    # recovery phase to find a file the product is right not to produce.
+    #
+    # This has to be explicit because Windows does not agree with itself:
+    # recursing with Get-ChildItem descends into a junction on Windows 10 and
+    # Server 2019, and does not on Windows 11 and Server 2025. Without this the
+    # recorded markers differ between machines, and Server 2019 reported a file
+    # missing that had in fact been recovered under its real name.
+    $behindReparse = @(
+        Get-ChildItem -LiteralPath $TestRoot -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } |
+            ForEach-Object { $_.FullName.Substring($TestRoot.Length + 1) + '\' }
+    )
+    if ($behindReparse.Count) {
+        Report ("not hashing anything behind: " + ($behindReparse -join ', '))
+    }
+
     $records = @()
     Get-ChildItem -LiteralPath $TestRoot -Recurse -File -Force |
         Where-Object { $_.LinkType -ne 'SymbolicLink' } |
         ForEach-Object {
             $relative = $_.FullName.Substring($TestRoot.Length + 1)
+            $skip = $false
+            foreach ($prefix in $behindReparse) {
+                if ($relative.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $skip = $true }
+            }
+            if ($skip) { return }
             try {
                 $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
                 $records += [pscustomobject]@{
