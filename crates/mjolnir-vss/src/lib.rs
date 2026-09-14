@@ -42,7 +42,7 @@ use mjolnir_core::exit::ExitCode;
 use windows::core::{Interface, BSTR, GUID, HRESULT};
 use windows::Win32::Foundation::{FALSE, RPC_E_CHANGED_MODE, RPC_E_TOO_LATE, S_FALSE};
 use windows::Win32::Storage::Vss::{
-    IVssAsync, IVssEnumObject, VSS_BT_FULL, VSS_CTX_ALL, VSS_CTX_BACKUP, VSS_OBJECT_NONE,
+    IVssAsync, IVssEnumObject, VSS_BT_COPY, VSS_CTX_ALL, VSS_CTX_BACKUP, VSS_OBJECT_NONE,
     VSS_OBJECT_PROP, VSS_OBJECT_SNAPSHOT, VSS_OBJECT_SNAPSHOT_SET, VSS_SNAPSHOT_PROP,
     VSS_WRITER_STATE,
 };
@@ -347,6 +347,14 @@ pub struct VssSession {
 // backup is the whole reason it is Send.
 unsafe impl Send for VssSession {}
 
+/// What MjolnirVSS tells the writers this backup is.
+///
+/// Named rather than written inline so the choice can be asserted on: a change
+/// from copy to full would be invisible in a diff of one argument, and would
+/// silently start truncating other people's transaction logs. See
+/// [`VssSession::configure`] for why it is copy.
+const BACKUP_TYPE: windows::Win32::Storage::Vss::VSS_BACKUP_TYPE = VSS_BT_COPY;
+
 impl VssSession {
     /// Starts a session and gathers writer metadata.
     ///
@@ -460,6 +468,27 @@ impl VssSession {
         // rather than application components. Bootable system state is
         // requested so writers prepare for a bare metal backup.
         //
+        // The type is **copy**, not full, and that is a deliberate and load
+        // bearing choice rather than a detail.
+        //
+        // A full backup, in the words of vss.h, means "each file's backup
+        // history will be updated to reflect that it was backed up". Writers
+        // act on that: SQL Server and Exchange treat a completed full backup as
+        // theirs to account for, and truncate their transaction logs. A copy
+        // backup is defined as copying the files "regardless of the state of
+        // each file's backup history", and the history "will not be updated".
+        //
+        // MjolnirVSS takes an image of a disk. It cannot restore a database
+        // component, it keeps no backup history, and it is in no position to
+        // take responsibility for anybody's log chain. Declaring a full backup
+        // would tell every writer on the machine something untrue, and on a
+        // server running SQL Server or Exchange the cost of that is somebody
+        // else's backup chain broken by a tool that was only meant to be
+        // reading.
+        //
+        // On a machine with no application writers the two are the same. That
+        // is exactly why this was easy to get wrong and easy to miss.
+        //
         // SAFETY: the interface is alive for the whole session. The three
         // flags are declared `u8` in sys.rs because vsbackup.h declares them as
         // C++ `bool`, which is one byte, not the four byte Win32 `BOOL`; on
@@ -471,7 +500,7 @@ impl VssSession {
                 self.this(),
                 0, // bSelectComponents
                 1, // bBackupBootableSystemState
-                VSS_BT_FULL,
+                BACKUP_TYPE,
                 0, // bPartialFileSupport
             )
         };
@@ -1142,5 +1171,22 @@ mod tests {
     fn a_null_async_pointer_means_the_call_already_finished() {
         let cancel = CancelToken::new();
         assert!(wait_for(std::ptr::null_mut(), &cancel, "test").is_ok());
+    }
+
+    /// A backup that says it is a full backup is telling every writer on the
+    /// machine that it has taken responsibility for their data, and SQL Server
+    /// and Exchange answer that by truncating their transaction logs.
+    /// MjolnirVSS images a disk; it restores no components and keeps no backup
+    /// history, so it has no business claiming that. If this assertion ever
+    /// fails, somebody has quietly made MjolnirVSS break other people's backup
+    /// chains.
+    #[test]
+    fn the_backup_is_declared_a_copy_and_never_a_full_backup() {
+        assert_eq!(BACKUP_TYPE, VSS_BT_COPY);
+        assert_ne!(
+            BACKUP_TYPE,
+            windows::Win32::Storage::Vss::VSS_BT_FULL,
+            "a full backup updates every file's backup history and truncates logs"
+        );
     }
 }
