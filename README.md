@@ -1,207 +1,195 @@
 # MjolnirVSS
 
-**Copy the disk Windows runs from. Put it back on a new one.**
+**Portable bare metal backup and recovery for Windows — no agent, no driver, no service.**
 
 MjolnirVSS images a whole Windows system disk while Windows is running, and
-writes that image onto a blank replacement disk after the original has failed.
-One executable, run from a folder. No installer, no service, no driver, no
-runtime.
+writes that image back onto a blank replacement disk after the original has
+failed. One executable, run from a folder. Delete the folder and nothing of it
+remains.
 
 ![The MjolnirVSS window, listing the disk and its four partitions before anything is copied](docs/images/main-window.png)
+
+---
+
+## Status: early alpha
 
 | | |
 |---|---|
 | **Version** | `0.1.0-alpha.1` — see [`CHANGELOG.md`](CHANGELOG.md) |
-| **Runs on** | Windows 10, Windows 11, Windows Server 2019 and 2025, on UEFI with a GPT disk |
-| **Proven on real hardware** | **No.** Every result below was measured in a virtual machine |
-| **Download** | None yet. Build it yourself, below |
+| **Availability** | Source only. There is no binary release yet; [build it yourself](#building) |
+| **End to end proof** | Backup, verify, restore and boot completed on four Windows versions — **all in virtual machines** |
+| **Physical bare metal recovery** | **Never performed.** No restored disk has been booted on real hardware |
 | **Licence** | GPL-3.0-or-later |
 
 Windows 10 22H2, Windows 11 24H2, Server 2019 and Server 2025 have each been
 backed up live, verified, restored onto a blank disk from the recovery wizard,
-and **started unaided**. Each restored machine matched 12 of 12 file hashes and
-kept every partition's identifier, offset and size.
+and started unaided. Each restored machine matched 12 of 12 file hashes and kept
+every partition's identifier, offset and size.
 
 That is four virtual machines. Firmware differs, disks differ, and a virtual
-NVMe disk is not a Samsung one. **Test it on a machine you can afford to lose,
-and keep the backup you already have.**
+NVMe disk is not a Samsung one. **Treat this as software to test on a machine
+you can afford to lose. Keep the backup you already have.**
 
 ---
 
-## In one minute
+## Why
+
+Windows' own image backup is deprecated, ties the result to a machine specific
+layout, and tells you little about whether the image is any good. Most
+alternatives want an installer, a service, a kernel filter driver and a licence
+server on a machine you are trying to keep clean.
+
+MjolnirVSS takes the opposite position:
+
+- **Nothing is installed.** No service, no driver, no scheduled task, no registry
+  entries, no runtime. It runs from a USB stick and leaves no trace.
+- **The image is of the whole disk, not a file selection.** Partition table, EFI,
+  Microsoft Reserved, Windows and recovery. If a partition needed to boot cannot
+  be read, the backup fails rather than producing a disk that will not start.
+- **Free space is skipped.** Only the clusters NTFS reports in use are read, so a
+  62.8 GiB partition holding 14.2 GiB is read in minutes, not hours.
+- **Every backup is verified as it is made.** Each block is read back,
+  decompressed and compared against its BLAKE3 digest before the backup is
+  marked complete.
+- **The format is documented, not proprietary.** A backup is a folder of JSON and
+  compressed blocks, specified in [`docs/backup-format.md`](docs/backup-format.md)
+  in enough detail to write an independent reader.
+- **It does not disturb other backup software.** MjolnirVSS declares a *copy*
+  backup (`VSS_BT_COPY`), so it does not move SQL Server's differential base and
+  does not truncate Exchange's logs.
+
+---
+
+## What works today
+
+Four states are used below, and they are not interchangeable: **implemented**
+(code exists and is unit tested), **VM** (exercised end to end in a virtual
+machine), **physical** (exercised on a real Windows machine — read only; nothing
+has ever been written to a physical disk), **not proven**.
+
+| Capability | State |
+|---|---|
+| Live backup of a running system through VSS | VM, and against a real Windows 11 installation |
+| Capturing GPT layout, EFI, MSR, Windows and recovery partitions | VM |
+| Used block imaging, skipping NTFS free space | VM; 512e sector discovery checked on a physical Kingston KC2500 |
+| Verification of every block, on write and on demand | VM, including deliberately damaged backups |
+| Restore onto a blank disk, same size and larger | VM |
+| Rebuilding the partition table, checked partition by partition | VM |
+| UEFI boot repair after a restore | VM; a deliberately broken disk was made to start again |
+| **Booting a restored Windows** | **VM only. Never on physical hardware** |
+| Refusing unsafe restore targets | Implemented and tested |
+| Single file recovery out of a backup | VM, against a real backup of a real Windows volume |
+| Recovery media built from this machine's own Windows recovery files | VM, and the media it produces has been booted |
+| Graphical backup window | Implemented; not yet used by anyone but its author |
+| Graphical recovery wizard, keyboard only | VM, driven through a whole restore in real Windows PE with no mouse |
+| Cancelling cleanly with Ctrl+C | VM; exits `9 cancelled` and releases the shadow copy it held |
+| Encrypted backups (Argon2id, AES-256-GCM) | VM, taken all the way round to a booting restore |
+| BitLocker: unlocked volume backed up through its shadow copy | Measured on a physical BitLocker machine |
+| BitLocker: locked volume | Refused, with an explanation |
+| Restore point warning before a backup | Measured on a physical machine |
+| Incremental backups | Not implemented, and deliberately not started until the above is proven |
+
+The exact boundary between virtual and physical checks is recorded in
+[`docs/testing.md`](docs/testing.md).
+
+---
+
+## Quick start
 
 ```powershell
 MjolnirVSS.exe inspect                              # what would be copied
-MjolnirVSS.exe backup  --destination E:\Backups     # copy it
-MjolnirVSS.exe verify  E:\Backups\PC_2026-09-14_1015
-MjolnirVSS.exe recovery-media --iso E:\Recovery.iso # make the rescue disc
+MjolnirVSS.exe backup --destination E:\Backups      # copy it
+MjolnirVSS.exe verify E:\Backups\PC_2026-09-14_1015
+MjolnirVSS.exe recovery-media --iso E:\Recovery.iso # make the rescue media
 ```
 
 Or run `MjolnirVSS.exe` with no arguments for the window. Both use the same
 engine, so a bug found in one is the bug the other would have had.
 
----
-
-## What it does
-
-- **Nothing is installed.** No service, no driver, no scheduled task, no
-  registry entries, no runtime. Deleting the folder removes every trace.
-- **The computer stays usable.** The shadow copy service freezes the disk for
-  the instant it takes to open a snapshot; the copy is read from that.
-- **Every partition needed to boot is captured** — the partition table, EFI,
-  Microsoft Reserved, Windows and recovery. If one cannot be read the backup
-  fails, rather than producing a disk that will not start.
-- **Free space is skipped.** Only the clusters the filesystem reports in use are
-  read. A volume that will not answer is copied whole, and the backup says so.
-- **Verified before it counts.** Every block is read back, decompressed and
-  compared against its BLAKE3 digest before the backup is marked complete.
-- **Optional encryption.** Argon2id and AES-256-GCM from RustCrypto. The
-  password is never stored and never accepted as an argument.
-- **An open format.** A backup is a folder of JSON and compressed blocks,
-  documented in [`docs/backup-format.md`](docs/backup-format.md) in enough
-  detail to write an independent reader.
-- **It leaves other backup software alone.** MjolnirVSS declares a *copy*
-  backup, so it does not move SQL Server's differential base or truncate
-  Exchange's logs. See [`docs/supported-configurations.md`](docs/supported-configurations.md).
+The backup lands in a folder named after the computer and the time, for example
+`DESKTOP-1A2B_2026-09-14_1015`. `--preview <bytes>` captures only the first part
+of each partition so the whole pipeline can be exercised in seconds; a preview
+backup is marked as such and can never be restored.
 
 ---
 
-## Where each feature actually stands
+## Supported systems
 
-| Feature | State |
-|---|---|
-| Consistent live backup using VSS | **Implemented**, proven against a real Windows 11 machine, encrypted and not |
-| Capturing the full GPT layout, EFI, MSR, Windows and recovery partitions | **Implemented**, tested against synthetic disks |
-| Used block imaging: skipping free space on NTFS volumes | **Implemented**, proven on a real Windows volume: 14.2 GiB read out of a 62.8 GiB partition, and the result restored and booted |
-| Warning before a backup may cost you restore points | **Implemented and measured** on a real machine |
-| Verification: decompress and checksum every block | **Implemented and tested**, including against deliberately damaged backups |
-| Restoring onto a blank disk | **Implemented**, done from real recovery media onto blank virtual disks of the same size and of a larger size, and both booted |
-| Rebuilding the partition table on the replacement disk | **Implemented**, and the restored table checked partition by partition against the original |
-| Refusing unsafe restore targets | **Implemented and tested** |
-| Stopping cleanly with Ctrl+C | **Implemented and proven**: a real backup interrupted mid copy exits `9 cancelled`, releases the shadow copy it was holding, and leaves nothing marked complete |
-| Graphical interface for backup | **Implemented**, not yet tested by anyone but its author |
-| Graphical recovery wizard | **Implemented**, run in real Windows PE and driven through a whole restore with no mouse at all |
-| **Booting a restored Windows** | **Done repeatedly, in virtual machines**: same size disk and larger, plain and encrypted, and once only because the boot repair fixed it. Never on real hardware |
-| Repairing UEFI boot configuration after a restore | **Implemented and proven.** A restored disk was deliberately broken so it would not start, and the repair is what made it start again |
-| Restoring individual files from a backup | **Implemented**, proven against a real Windows volume out of a real backup |
-| Creating recovery media | **Implemented** where the Windows ADK is installed, and the media it makes has been booted |
-| BitLocker: unlocked volume | **Implemented and measured.** See [`docs/bitlocker.md`](docs/bitlocker.md) |
-| BitLocker: locked volume | **Refused**, clearly |
-| Encrypting a backup | **Implemented**, and taken all the way round: an encrypted backup of a running Windows 11, restored from recovery media and booted. Argon2id and AES-256-GCM, nothing home made. The recovery wizard asks for the password; the backup window does not offer encryption yet. See [`docs/encryption.md`](docs/encryption.md) |
-| Incremental backups | Not implemented, and deliberately not started until the above works |
-
----
-
-## Requirements
-
-- Windows 10, Windows 11 or Windows Server, 64 bit. **Windows 10 22H2, Windows
-  11 24H2, Server 2019 and Server 2025 have each been backed up, restored and
-  booted**, all in virtual machines. See
-  [`docs/supported-configurations.md`](docs/supported-configurations.md)
+- Windows 10, Windows 11 or Windows Server, 64 bit. Windows 10 22H2, Windows 11
+  24H2, Server 2019 and Server 2025 have each been backed up, restored and
+  booted in a virtual machine
 - A UEFI machine with a GPT system disk
 - One physical disk holding Windows
-- An external drive formatted NTFS, with room for the backup
-- Administrator rights (MjolnirVSS asks when it starts)
+- An external NTFS drive with room for the backup
+- Administrator rights, requested at start
 
-**Not supported**, and refused with an explanation rather than attempted:
-dynamic disks, Storage Spaces, software RAID, ReFS system volumes, machines that
-boot in legacy BIOS mode, Windows spread across several disks, and disks with an
-untested sector size.
+**Refused with an explanation rather than attempted:** dynamic disks, Storage
+Spaces, software RAID, ReFS system volumes, legacy BIOS boot, Windows spread
+across several disks, and disks with an untested sector size.
 
-### Restore points
+Two behaviours worth knowing before the first run:
 
-Taking a shadow copy can cost you older ones. Windows keeps a volume's shadow
-copies in one pool and can only release space from the oldest end, so when
-MjolnirVSS removes the temporary snapshot it took, Windows sometimes removes
-older ones first to reclaim the space. This was measured on a real machine, and
-it happens to any program that takes a snapshot, not only this one.
-
-MjolnirVSS removes only the snapshot it created, by its own identifier. It says
-so before the backup starts when there is anything to lose, shows the figures
-behind **Show details**, and does not claim your restore points will survive,
-because it cannot.
-
-Your files are not affected. See
-[`docs/vss-lifecycle.md`](docs/vss-lifecycle.md).
-
-### BitLocker
-
-**An unlocked BitLocker volume is backed up normally.** MjolnirVSS reads it
-through its shadow copy, which presents it decrypted, so the backup holds an
-ordinary NTFS filesystem. This was measured rather than assumed; the evidence is
-in [`docs/bitlocker.md`](docs/bitlocker.md) and you can reproduce it with
-`MjolnirVSS.exe diagnose-bitlocker`.
-
-A **locked** volume is refused, because nothing can read it.
-
-Two things follow, and MjolnirVSS says both rather than leaving them implied:
-
-- **The backup contains readable copies of your files.** BitLocker does not
-  protect them once they are out of the volume. Unless you pass `--encrypt`,
-  nothing else does either, so look after the backup drive as carefully as the
-  computer. See [`docs/encryption.md`](docs/encryption.md).
-- **A restored disk comes back unencrypted.** BitLocker protection does not carry
-  over, and this has been checked rather than assumed: a fully encrypted machine
-  was backed up, restored and started, and the restored volume reported itself
-  fully decrypted with no key protectors at all. Turn BitLocker on again after
-  restoring.
-
-MjolnirVSS never reads, stores or logs a recovery key, and never changes
-BitLocker's state.
+- **Restore points.** Windows keeps a volume's shadow copies in one pool and can
+  only release space from the oldest end, so removing the snapshot MjolnirVSS
+  took can cost you older restore points. This happens to any program that takes
+  a snapshot. MjolnirVSS deletes only its own snapshot, by identifier, and warns
+  before starting when there is anything to lose. Your files are unaffected.
+  [`docs/vss-lifecycle.md`](docs/vss-lifecycle.md)
+- **BitLocker.** An unlocked volume is read through its shadow copy, which
+  presents it decrypted, so **the backup contains readable copies of your files**
+  unless you pass `--encrypt`. A restored disk comes back unencrypted; turn
+  BitLocker on again afterwards. A locked volume is refused. MjolnirVSS never
+  reads, stores or logs a recovery key. [`docs/bitlocker.md`](docs/bitlocker.md)
 
 ---
 
-## Taking a backup
+## Recovery
 
-![The MjolnirVSS main window: Back up this PC, Restore files, Recovery media, Settings, Exit](docs/images/main-window.png)
-
-Five things. That is the whole window, and it is deliberate: the day you need a
-backup program is not the day to start reading its manual. Each one says what it
-does, so nothing has to be guessed at or looked up.
-
-1. Plug in the external drive.
-2. Run `MjolnirVSS.exe`. Windows asks for permission; say yes.
-3. Press **Back up this PC**.
-4. Check what it found, choose the folder to save into, and press **Start backup**.
-5. Wait. The backup verifies itself at the end.
-
-The window shows what it found before doing anything: the disk, every partition,
-how much there is to read, and any note worth having. **Start backup** stays
-greyed out until you choose somewhere to put it, and that somewhere cannot be
-the disk being copied.
-
-The backup lands in a folder named after the computer and the time, for example
-`DESKTOP-1A2B_2026-09-12_1015`.
-
-### From a command prompt
-
-The window is the product; these exist for testing, diagnostics and scheduled
-backups.
+**Make the media while the computer still works.** A computer that will not start
+cannot build its own rescue disc.
 
 ```powershell
-MjolnirVSS.exe inspect
-MjolnirVSS.exe backup --destination E:\Backups
-MjolnirVSS.exe backup --destination E:\Backups --encrypt
-MjolnirVSS.exe verify E:\Backups\DESKTOP-1A2B_2026-09-12_1015
-MjolnirVSS.exe list E:\Backups
-MjolnirVSS.exe cleanup-snapshots
-MjolnirVSS.exe diagnose-bitlocker
+MjolnirVSS.exe recovery-media --iso E:\MjolnirVSS-Recovery.iso
 ```
 
-`--preview <bytes>` captures only the first part of each partition, so the whole
-pipeline can be exercised in seconds. A preview backup is marked as such and can
-never be restored.
+The media is built from the Windows recovery files already on the machine —
+nothing belonging to Microsoft is shipped or downloaded. It needs the Windows
+ADK. [`docs/recovery-media.md`](docs/recovery-media.md)
 
-MjolnirVSS never registers a scheduled task. If you want backups on a schedule,
-create the task yourself and point it at the `backup` command above.
+When the disk has failed, boot that media and the wizard starts on its own. It
+runs from the keyboard alone, which matters on a machine whose mouse may not be
+the thing that still works.
 
-### Made to be driven by something that is not a person
+![Choosing the disk to restore onto. The drive holding the backup is marked and cannot be chosen](docs/images/recovery-choose-disk.png)
 
-Every command takes `--json` and prints one document on standard output -
+The drive holding the backup cannot be chosen. Before anything is erased you are
+shown the target disk's number, model, serial number, size and current
+partitions, and you have to type `ERASE <serial number>` exactly — `y` is not
+accepted.
+
+![The review step: what will be restored, onto which disk, and the phrase that has to be typed](docs/images/recovery-confirm-erase.png)
+
+A disk too small for the layout is refused, every stored block is confirmed
+present **before** anything is erased, and the restore stops if the disk changed
+size between being checked and being written.
+
+![The finished step: 28.5 GiB written, four partitions restored](docs/images/recovery-finished.png)
+
+Single files can be recovered without restoring a machine: **Restore files** in
+the window, or `volumes` / `browse` / `extract` on the command line. The backup
+is opened read only; nothing is mounted and nothing is erased.
+[`docs/file-recovery.md`](docs/file-recovery.md)
+
+Full walkthrough: [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md).
+
+---
+
+## Automation
+
+Every command takes `--json` and prints one document on standard output —
 **failures included**, with the exit code inside it. Progress goes to standard
-error and never pollutes the JSON. Nothing stops to ask a question: an encrypted
-backup takes `--password-file`, a restore takes `--confirm`, and a command that
-would otherwise have to ask refuses and names the flag rather than hanging.
+error and never pollutes the JSON. Nothing stops to ask a question: a command
+that would otherwise have to ask refuses and names the flag rather than hanging.
 
 ```powershell
 $out  = MjolnirVSS.exe --json list E:\Backups
@@ -210,121 +198,31 @@ if ($code -ne 0) { throw ($out | ConvertFrom-Json).error.what }
 ```
 
 Exit codes are a contract: `0` worked, `6` the backup is damaged, `7` the
-destination is wrong, `9` cancelled, and so on. The full table, the failure
-document, and a whole scheduled backup are in
+destination is wrong, `9` cancelled, and so on. MjolnirVSS never registers a
+scheduled task; create one yourself and point it at `backup`. The full table of
+eleven codes, the failure document and a complete scheduled backup are in
 [`docs/automation.md`](docs/automation.md).
 
 ---
 
-## Checking a backup
+## Documentation
 
-```powershell
-MjolnirVSS.exe verify E:\Backups\DESKTOP-1A2B_2026-09-12_1015
-```
-
-This reads every stored block, decompresses it and compares its checksum. It
-exits with code 0 if the backup is sound and 6 if it is not.
-
-A backup is verified automatically when it is taken. Verifying again later is
-worth doing, because the thing most likely to damage a backup is the drive it is
-sitting on.
-
----
-
-## Getting a single file back
-
-You do not have to restore a whole computer to get one file. Press **Restore
-files**, choose the backup, choose the drive inside it, browse, and press
-**Copy out...**
-
-Nothing is erased and nothing is mounted. The backup is opened read only.
-
-```powershell
-# which drives are inside this backup
-MjolnirVSS.exe volumes E:\Backups\DESKTOP-1A2B_2026-09-12_1015
-
-# what is in a folder
-MjolnirVSS.exe browse E:\Backups\DESKTOP-1A2B_2026-09-12_1015 `
-    --volume disk-0-part-3 --folder \Users\tobias\Documents
-
-# copy it out
-MjolnirVSS.exe extract E:\Backups\DESKTOP-1A2B_2026-09-12_1015 `
-    --volume disk-0-part-3 --item \Users\tobias\Documents --into D:\Recovered
-```
-
-Add `--json` to any of them for output a script can read. Details:
-[`docs/file-recovery.md`](docs/file-recovery.md).
-
----
-
-## Recovering a computer
-
-### First, make the media, while the computer still works
-
-Press **Recovery media** in the main window, or:
-
-```powershell
-MjolnirVSS.exe recovery-media --iso E:\MjolnirVSS-Recovery.iso
-```
-
-MjolnirVSS builds it out of the Windows recovery parts your own computer
-already has. Nothing belonging to Microsoft is shipped or downloaded. Write the
-ISO to a USB stick with any tool that writes a bootable image. Do this **before**
-you need it: a computer that will not start cannot build its own rescue disc.
-
-Needs the Windows ADK installed. Details and the reason:
-[`docs/recovery-media.md`](docs/recovery-media.md). Without the ADK, copy
-`MjolnirVSS.Restore.exe` onto a Windows installation USB made with Microsoft's
-Media Creation Tool, boot it, and press **Shift+F10** at Windows Setup for a
-command prompt.
-
-### Then, when the disk has failed
-
-1. Boot the broken computer from that media. The recovery wizard starts on its
-   own.
-2. Follow the five steps: find the backup, choose it, choose the blank
-   replacement disk, read what is about to be erased, and type the disk's
-   serial number to confirm.
-
-It works from the keyboard alone - Tab, arrows and Enter - which matters in
-Windows PE on a machine whose mouse may not be the thing that still works.
-
-![Choosing the disk to restore onto. The drive holding the backup is marked and cannot be chosen](docs/images/recovery-choose-disk.png)
-
-**The drive holding the backup cannot be chosen.** Erasing it halfway through a
-restore would leave a computer with neither a working system nor anything to
-recover from, so it is refused rather than warned about.
-
-![The review step: what will be restored, onto which disk, and the phrase that has to be typed](docs/images/recovery-confirm-erase.png)
-
-Before anything is erased you are shown the disk number, model, serial number,
-size and every partition currently on it, and you have to type
-
-```text
-ERASE <the disk's serial number>
-```
-
-exactly. It will not accept `y`. Then it asks once more, naming the disk.
-
-![The finished step: 28.5 GiB written, four partitions restored](docs/images/recovery-finished.png)
-
-It also refuses a disk too small to hold the layout, checks every stored block is
-present **before** it erases anything, and stops if the disk changed size between
-being checked and being written.
-
-Full walkthrough: [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md).
-
----
-
-## Test your recovery before you trust a backup
-
-This is not boilerplate. A backup you have never restored from is a guess about
-the future.
-
-The way to find out whether MjolnirVSS works for your machine is to restore one
-of its backups onto a spare disk, or into a virtual machine, and see whether
-Windows starts. Until you have done that, keep whatever backup you were using
-before.
+| Document | What it covers |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | How the pieces fit together and why |
+| [`docs/backup-format.md`](docs/backup-format.md) | The on disk format, in enough detail to reimplement |
+| [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md) | Recovering a computer, step by step |
+| [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media from this machine's own Windows parts |
+| [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back out of a backup |
+| [`docs/automation.md`](docs/automation.md) | Exit codes, JSON output, scheduled backups |
+| [`docs/supported-configurations.md`](docs/supported-configurations.md) | Exactly what is supported and what is refused |
+| [`docs/vss-lifecycle.md`](docs/vss-lifecycle.md) | How the shadow copy is taken and released |
+| [`docs/bitlocker.md`](docs/bitlocker.md) | How BitLocker is handled, and the measurement behind it |
+| [`docs/encryption.md`](docs/encryption.md) | Encrypting a backup, what it hides and what it does not |
+| [`docs/threat-model.md`](docs/threat-model.md) | What is treated as hostile, and what is not defended against |
+| [`docs/testing.md`](docs/testing.md) | The test matrix, and what was virtual versus physical |
+| [`docs/vm-testing.md`](docs/vm-testing.md) | The virtual machine harness that proves the whole cycle |
+| [`docs/roadmap.md`](docs/roadmap.md) | What comes next, in order |
 
 ---
 
@@ -339,33 +237,10 @@ cargo test --workspace
 .\scripts\package.ps1
 ```
 
-`package.ps1` produces `dist\MjolnirVSS`, which is the portable folder. It also
-checks that the recovery executable does not import `vssapi.dll`, because that
-library does not exist in Windows PE.
-
-The release build links the C runtime statically, so the Visual C++
-Redistributable is not required.
-
----
-
-## Documentation
-
-| Document | What it covers |
-|---|---|
-| [`docs/architecture.md`](docs/architecture.md) | How the pieces fit together and why |
-| [`docs/backup-format.md`](docs/backup-format.md) | The on disk format, in enough detail to reimplement |
-| [`docs/vss-lifecycle.md`](docs/vss-lifecycle.md) | How the shadow copy is taken and released |
-| [`docs/bitlocker.md`](docs/bitlocker.md) | How BitLocker is handled, and the measurement behind it |
-| [`docs/bare-metal-restore.md`](docs/bare-metal-restore.md) | Recovering a computer, step by step |
-| [`docs/encryption.md`](docs/encryption.md) | Encrypting a backup, what it hides and what it does not |
-| [`docs/recovery-media.md`](docs/recovery-media.md) | Making bootable media out of the Windows parts this computer already has |
-| [`docs/file-recovery.md`](docs/file-recovery.md) | Getting single files back out of a backup |
-| [`docs/supported-configurations.md`](docs/supported-configurations.md) | Exactly what is supported and what is refused |
-| [`docs/testing.md`](docs/testing.md) | How to run the tests, including the manual matrix |
-| [`docs/vm-testing.md`](docs/vm-testing.md) | The virtual machine harness that proves the whole cycle |
-| [`docs/threat-model.md`](docs/threat-model.md) | What MjolnirVSS treats as hostile, and what it does not defend against |
-| [`docs/automation.md`](docs/automation.md) | Driving it from a script: exit codes, JSON output, nothing that waits for a person |
-| [`docs/roadmap.md`](docs/roadmap.md) | What comes next, in order |
+`package.ps1` produces `dist\MjolnirVSS`, the portable folder. It also checks
+that the recovery executable does not import `vssapi.dll`, because that library
+does not exist in Windows PE. The release build links the C runtime statically,
+so the Visual C++ Redistributable is not required.
 
 ---
 
