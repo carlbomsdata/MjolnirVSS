@@ -32,6 +32,10 @@
 [CmdletBinding()]
 param(
     [string] $Name = 'MjolnirVSS-Test-Restore',
+    # Which machine's backup disk to restore from. A server and a workstation
+    # are different machines with different backups, and the restore has to be
+    # told which one it is putting back.
+    [string] $SourceVm = 'MjolnirVSS-Test-Source',
     [int] $TargetDiskGB = 64,
     [int] $MemoryMB = 4096,
     [int] $Cpus = 2,
@@ -52,7 +56,7 @@ $vmDir = Join-Path (Join-Path $lab 'vms') $Name
 $vmxPath = Join-Path $vmDir "$Name.vmx"
 $serialLog = Join-Path (Join-Path $lab 'evidence') "$Name-console.log"
 
-$sourceVmx = Join-Path (Join-Path (Join-Path $lab 'vms') 'MjolnirVSS-Test-Source') 'MjolnirVSS-Test-Source.vmx'
+$sourceVmx = Join-Path (Join-Path (Join-Path $lab 'vms') $SourceVm) "$SourceVm.vmx"
 $backupDisk = Join-Path (Split-Path -Parent $sourceVmx) 'backup.vmdk'
 
 Write-LabStep "lab root:  $lab"
@@ -61,7 +65,7 @@ Write-LabStep "vm folder: $vmDir"
 # ---- the source has to be off, and its backup disk consolidated ------------
 
 if ((Test-Path -LiteralPath $sourceVmx) -and (Test-LabVmRunning -VmxPath $sourceVmx)) {
-    throw 'MjolnirVSS-Test-Source is running. Shut it down: both machines share the backup disk.'
+    throw "$SourceVm is running. Shut it down: both machines share the backup disk."
 }
 if (-not (Test-Path -LiteralPath $backupDisk)) {
     throw "no backup disk at $backupDisk; run the backup phase first"
