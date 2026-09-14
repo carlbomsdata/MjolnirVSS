@@ -1,68 +1,68 @@
 # MjolnirVSS
 
-Portable bare metal backup and recovery for Windows 10, Windows 11 and Windows Server.
+**Copy the disk Windows runs from. Put it back on a new one.**
+
+MjolnirVSS images a whole Windows system disk while Windows is running, and
+writes that image onto a blank replacement disk after the original has failed.
+One executable, run from a folder. No installer, no service, no driver, no
+runtime.
+
+![The MjolnirVSS window, listing the disk and its four partitions before anything is copied](docs/images/main-window.png)
+
+| | |
+|---|---|
+| **Version** | `0.1.0-alpha.1` — see [`CHANGELOG.md`](CHANGELOG.md) |
+| **Runs on** | Windows 10, Windows 11, Windows Server 2019 and 2025, on UEFI with a GPT disk |
+| **Proven on real hardware** | **No.** Every result below was measured in a virtual machine |
+| **Download** | None yet. Build it yourself, below |
+| **Licence** | GPL-3.0-or-later |
+
+Windows 10 22H2, Windows 11 24H2, Server 2019 and Server 2025 have each been
+backed up live, verified, restored onto a blank disk from the recovery wizard,
+and **started unaided**. Each restored machine matched 12 of 12 file hashes and
+kept every partition's identifier, offset and size.
+
+That is four virtual machines. Firmware differs, disks differ, and a virtual
+NVMe disk is not a Samsung one. **Test it on a machine you can afford to lose,
+and keep the backup you already have.**
 
 ---
 
-## Status: `0.1.0-alpha.1`. Tested in virtual machines, never on real hardware.
+## In one minute
 
-What changed, and what this alpha does and does not do:
-[`CHANGELOG.md`](CHANGELOG.md).
+```powershell
+MjolnirVSS.exe inspect                              # what would be copied
+MjolnirVSS.exe backup  --destination E:\Backups     # copy it
+MjolnirVSS.exe verify  E:\Backups\PC_2026-09-14_1015
+MjolnirVSS.exe recovery-media --iso E:\Recovery.iso # make the rescue disc
+```
 
-**A restored Windows has now been booted from a MjolnirVSS backup.** On
-13 September 2026, in a disposable VMware virtual machine: a live backup of a
-running Windows 11, taken through the shadow copy service with used block
-imaging; recovery media built by MjolnirVSS from this computer's own Windows
-parts; the backup restored onto a blank 64 GB disk from that media, driven from
-the keyboard in Windows PE; and the machine started on its own, with no repair.
-
-Everything the restored machine was checked for came back right: all twelve test
-files matched the hashes taken when they were made, every partition kept its
-unique identifier, offset and size, the EFI partition held its boot files, the
-boot configuration named the Windows loader, and the Windows Recovery
-Environment was still registered.
-
-That cycle has since been run many times over: onto a disk the same size and a
-larger one, from an encrypted backup, from a BitLocker protected machine, and
-after a restore was deliberately broken so the boot repair had to be the thing
-that fixed it. Every one of them was a virtual machine.
-
-**No real computer has been restored.** Firmware differs, disks differ, and a
-virtual NVMe disk is not a Samsung one. Treat MjolnirVSS as something to test on
-a machine you can afford to lose, and keep another backup.
-
-What that means in practice is set out honestly below, feature by feature.
+Or run `MjolnirVSS.exe` with no arguments for the window. Both use the same
+engine, so a bug found in one is the bug the other would have had.
 
 ---
 
 ## What it does
 
-MjolnirVSS takes an image of a whole Windows system disk while Windows is
-running, stores it on an external drive as ordinary files, and can write it back
-onto a blank replacement disk after the original has failed.
-
-- **Nothing is installed.** Download, extract, run. No service, no driver, no
-  scheduled task, no registry entries, no .NET, no runtime of any kind. Deleting
-  the folder removes every trace.
-- **The computer stays usable** while the backup runs. Microsoft's Volume Shadow
-  Copy Service freezes the disk for the instant it takes to start the snapshot,
-  and the copy is taken from that frozen view.
-- **Every partition needed to boot is captured**: the GUID partition table, the
-  EFI system partition, the Microsoft Reserved partition, Windows, and the
-  recovery partition. A partition is never silently left out; if one cannot be
-  read, the backup fails rather than quietly producing a disk that will not
-  start.
-- **Free space is not copied.** MjolnirVSS asks the filesystem which clusters are
-  in use and reads only those, so a half empty drive makes a half sized backup. A
-  volume that will not answer is copied whole instead, and the backup records
-  that it had to.
-- **The backup is verified before it is called a backup.** Every stored piece is
-  read back, decompressed and checked against its BLAKE3 checksum. Only then is
-  the completion marker written. A backup that was interrupted is never reported
-  as usable.
-- **The format is documented and open.** A backup is a plain folder of JSON and
-  compressed blocks. See [`docs/backup-format.md`](docs/backup-format.md), which
-  contains enough detail to write an independent reader.
+- **Nothing is installed.** No service, no driver, no scheduled task, no
+  registry entries, no runtime. Deleting the folder removes every trace.
+- **The computer stays usable.** The shadow copy service freezes the disk for
+  the instant it takes to open a snapshot; the copy is read from that.
+- **Every partition needed to boot is captured** — the partition table, EFI,
+  Microsoft Reserved, Windows and recovery. If one cannot be read the backup
+  fails, rather than producing a disk that will not start.
+- **Free space is skipped.** Only the clusters the filesystem reports in use are
+  read. A volume that will not answer is copied whole, and the backup says so.
+- **Verified before it counts.** Every block is read back, decompressed and
+  compared against its BLAKE3 digest before the backup is marked complete.
+- **Optional encryption.** Argon2id and AES-256-GCM from RustCrypto. The
+  password is never stored and never accepted as an argument.
+- **An open format.** A backup is a folder of JSON and compressed blocks,
+  documented in [`docs/backup-format.md`](docs/backup-format.md) in enough
+  detail to write an independent reader.
+- **It leaves other backup software alone.** MjolnirVSS declares a *copy*
+  backup, so it does not move SQL Server's differential base or truncate
+  Exchange's logs. See [`docs/supported-configurations.md`](docs/supported-configurations.md).
 
 ---
 
@@ -165,13 +165,10 @@ does, so nothing has to be guessed at or looked up.
 4. Check what it found, choose the folder to save into, and press **Start backup**.
 5. Wait. The backup verifies itself at the end.
 
-![The backup screen, listing the disk and its four partitions, with a folder to save into and a name](docs/images/backup-screen.png)
-
-It shows you what it found before it does anything: the disk, every partition on
-it, how much there is to read, and any note worth having, such as a partition the
-shadow copy service will not handle. **Start backup** stays greyed out until you
-have chosen somewhere to put it, and it will not let that somewhere be the disk
-being copied.
+The window shows what it found before doing anything: the disk, every partition,
+how much there is to read, and any note worth having. **Start backup** stays
+greyed out until you choose somewhere to put it, and that somewhere cannot be
+the disk being copied.
 
 The backup lands in a folder named after the computer and the time, for example
 `DESKTOP-1A2B_2026-09-12_1015`.
