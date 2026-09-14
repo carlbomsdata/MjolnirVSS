@@ -126,9 +126,23 @@ is the honest state of each.
 | 19 | High DPI scaling | Built for and unit tested at 1x, 2x and 3x; not looked at by a person on a high DPI screen |
 | 20 | Boot repair when it is needed | **Done.** The boot files were deleted from a restored disk, the machine then failed to start, and the repair is what made it start again |
 
-All of the above marked done were done in disposable virtual machines. **None of
-it was done on real hardware.** The run is described in
-[`vm-testing.md`](vm-testing.md).
+**Everything that writes was done in disposable virtual machines.** Backup,
+verification, file recovery, restore and boot have never been run against a
+physical disk. The run is described in [`vm-testing.md`](vm-testing.md).
+
+Three rows above are the exception, and they are all **read only** checks that
+ran on the author's own physical machine because a virtual disk cannot answer
+them honestly:
+
+| # | What ran on real hardware | Why it had to |
+|---|---|---|
+| 1b | `Win32_EncryptableVolume` queried on a real BitLocker protected machine, agreeing with `manage-bde` | A virtual machine's BitLocker is BitLocker, but the question was whether the documented API agrees with Windows' own tool on a machine in ordinary use |
+| 1d | `MjolnirVSS.exe inspect` reported the machine's real shadow copy storage and restore point count | A fresh virtual machine has no restore points to get wrong |
+| 5 | 512e disk discovery on a Kingston KC2500 (512 logical / 4096 physical) | A virtual NVMe disk does not report the same geometry as a real SSD |
+
+None of those wrote anything. Row 1c says "a real NTFS volume" and means a real
+Windows installation rather than a synthetic disk image; it was a virtual
+machine.
 
 ---
 
