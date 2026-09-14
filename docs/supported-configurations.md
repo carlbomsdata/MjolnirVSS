@@ -31,11 +31,21 @@ MjolnirVSS declares a **copy** backup (`VSS_BT_COPY`), not a full one.
 
 That distinction does nothing at all on a machine with no application writers,
 and matters a great deal on a server. `vss.h` defines a full backup as one where
-"each file's backup history will be updated to reflect that it was backed up",
-and writers act on that: SQL Server and Exchange treat a completed full backup
-as theirs to account for and **truncate their transaction logs**. A copy backup
-is defined as copying files "regardless of the state of each file's backup
+"each file's backup history will be updated to reflect that it was backed up".
+A copy backup copies files "regardless of the state of each file's backup
 history", which "will not be updated".
+
+What writers do with that differs, and it is worth being exact rather than
+alarming:
+
+| Writer | What a **full** backup does | What a **copy** backup does |
+|---|---|---|
+| **SQL Server** | Commits the backup as the **differential base** and records it in the backup history, so the next differential is measured from MjolnirVSS's snapshot rather than from the administrator's own full backup | Microsoft: "doesn't constitute a base backup for further differential backup operations, and it also doesn't disturb the history of the previous differential backups" |
+| **Exchange, and writers that truncate** | Microsoft: "the log file will typically be truncated as a result of a full backup" | Microsoft: "log files should never be truncated as a result of a copy backup" |
+
+A full VSS backup does **not** truncate SQL Server's transaction log; under the
+full recovery model only a log backup does that. The damage a full backup would
+do to SQL Server is to the differential chain, not the log.
 
 MjolnirVSS images a disk. It cannot restore a single database, it keeps no
 backup history, and it is in no position to take responsibility for anybody's

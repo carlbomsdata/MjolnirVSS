@@ -472,11 +472,24 @@ impl VssSession {
         // bearing choice rather than a detail.
         //
         // A full backup, in the words of vss.h, means "each file's backup
-        // history will be updated to reflect that it was backed up". Writers
-        // act on that: SQL Server and Exchange treat a completed full backup as
-        // theirs to account for, and truncate their transaction logs. A copy
-        // backup is defined as copying the files "regardless of the state of
-        // each file's backup history", and the history "will not be updated".
+        // history will be updated to reflect that it was backed up". A copy
+        // backup copies the files "regardless of the state of each file's
+        // backup history", and the history "will not be updated".
+        //
+        // Writers act on that, and what they do differs by writer:
+        //
+        // * The SQL writer commits a completed full backup as the **differential
+        //   base**, and records it in the backup history. Microsoft's guidance
+        //   is explicit that a copy-only backup "doesn't constitute a base
+        //   backup for further differential backup operations, and it also
+        //   doesn't disturb the history of the previous differential backups".
+        //   So a full backup here would silently move somebody's differential
+        //   base. It does not truncate SQL Server's transaction log: in the
+        //   full recovery model only a log backup does that.
+        // * For writers that do truncate, the rule in the VSS documentation is
+        //   "log files should never be truncated as a result of a copy backup.
+        //   In contrast, the log file will typically be truncated as a result
+        //   of a full backup". Exchange is the usual example.
         //
         // MjolnirVSS takes an image of a disk. It cannot restore a database
         // component, it keeps no backup history, and it is in no position to
@@ -1174,12 +1187,13 @@ mod tests {
     }
 
     /// A backup that says it is a full backup is telling every writer on the
-    /// machine that it has taken responsibility for their data, and SQL Server
-    /// and Exchange answer that by truncating their transaction logs.
+    /// machine that it has taken responsibility for their data. The SQL writer
+    /// answers by committing it as the differential base; writers that truncate
+    /// logs on a full backup, Exchange among them, answer by truncating.
     /// MjolnirVSS images a disk; it restores no components and keeps no backup
     /// history, so it has no business claiming that. If this assertion ever
-    /// fails, somebody has quietly made MjolnirVSS break other people's backup
-    /// chains.
+    /// fails, somebody has quietly made MjolnirVSS disturb other people's
+    /// backup chains.
     #[test]
     fn the_backup_is_declared_a_copy_and_never_a_full_backup() {
         assert_eq!(BACKUP_TYPE, VSS_BT_COPY);
