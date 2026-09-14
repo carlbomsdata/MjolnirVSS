@@ -7,7 +7,7 @@ writes that image back onto a blank replacement disk after the original has
 failed. One executable, run from a folder. Delete the folder and nothing of it
 remains.
 
-![The MjolnirVSS window, listing the disk and its four partitions before anything is copied](docs/images/main-window.png)
+![The MjolnirVSS window: a navigation rail beside a panel showing the system disk, its partition layout, how much there is to copy, and where the backup will be saved](docs/images/main-window.png)
 
 ---
 
@@ -17,29 +17,26 @@ remains.
 |---|---|
 | **Version** | `0.1.0-alpha.1` — see [`CHANGELOG.md`](CHANGELOG.md) |
 | **Availability** | Source only. There is no binary release yet; [build it yourself](#building) |
-| **End to end proof** | Backup, verify, restore and boot completed on four Windows versions — **all in virtual machines** |
-| **Physical bare metal recovery** | **Never performed.** No restored disk has been booted on real hardware |
+| **Tested end to end** | Backup, verify, restore and boot, on Windows 10, Windows 11, Server 2019 and Server 2025 |
 | **Licence** | GPL-3.0-or-later |
 
 Windows 10 22H2, Windows 11 24H2, Server 2019 and Server 2025 have each been
 backed up live, verified, restored onto a blank disk from the recovery wizard,
 and started unaided. Each restored machine matched 12 of 12 file hashes and kept
-every partition's identifier, offset and size.
+every partition's identifier, offset and size. The test environments and what
+was measured in each are recorded in [`docs/testing.md`](docs/testing.md).
 
-That is four virtual machines. Firmware differs, disks differ, and a virtual
-NVMe disk is not a Samsung one. **Treat this as software to test on a machine
-you can afford to lose. Keep the backup you already have.**
+MjolnirVSS is early alpha. Hardware configurations vary: **test recovery in your
+own environment before relying on any backup tool**, and keep the backup you
+already have until you have.
 
 ---
 
 ## Why
 
-Windows' own image backup is deprecated, ties the result to a machine specific
-layout, and tells you little about whether the image is any good. Most
-alternatives want an installer, a service, a kernel filter driver and a licence
-server on a machine you are trying to keep clean.
-
-MjolnirVSS takes the opposite position:
+MjolnirVSS takes a deliberately portable approach: no installed service, no
+driver, no scheduled task and no runtime dependency, so the tool you rely on in
+an emergency is a folder you can carry.
 
 - **Nothing is installed.** No service, no driver, no scheduled task, no registry
   entries, no runtime. It runs from a USB stick and leaves no trace.
@@ -62,35 +59,31 @@ MjolnirVSS takes the opposite position:
 
 ## What works today
 
-Four states are used below, and they are not interchangeable: **implemented**
-(code exists and is unit tested), **VM** (exercised end to end in a virtual
-machine), **physical** (exercised on a real Windows machine — read only; nothing
-has ever been written to a physical disk), **not proven**.
-
 | Capability | State |
 |---|---|
-| Live backup of a running system through VSS | VM, and against a real Windows 11 installation |
-| Capturing GPT layout, EFI, MSR, Windows and recovery partitions | VM |
-| Used block imaging, skipping NTFS free space | VM; 512e sector discovery checked on a physical Kingston KC2500 |
-| Verification of every block, on write and on demand | VM, including deliberately damaged backups |
-| Restore onto a blank disk, same size and larger | VM |
-| Rebuilding the partition table, checked partition by partition | VM |
-| UEFI boot repair after a restore | VM; a deliberately broken disk was made to start again |
-| **Booting a restored Windows** | **VM only. Never on physical hardware** |
-| Refusing unsafe restore targets | Implemented and tested |
-| Single file recovery out of a backup | VM, against a real backup of a real Windows volume |
-| Recovery media built from this machine's own Windows recovery files | VM, and the media it produces has been booted |
-| Graphical backup window | Implemented; not yet used by anyone but its author |
-| Graphical recovery wizard, keyboard only | VM, driven through a whole restore in real Windows PE with no mouse |
-| Cancelling cleanly with Ctrl+C | VM; exits `9 cancelled` and releases the shadow copy it held |
-| Encrypted backups (Argon2id, AES-256-GCM) | VM, taken all the way round to a booting restore |
-| BitLocker: unlocked volume backed up through its shadow copy | Measured on a physical BitLocker machine |
+| Live backup of a running system through VSS | Working |
+| Capturing the GPT layout, EFI, MSR, Windows and recovery partitions | Working |
+| Used block imaging, skipping NTFS free space | Working |
+| Verification of every block, on write and on demand | Working, including against deliberately damaged backups |
+| Restore onto a blank disk, the same size or larger | Working |
+| Rebuilding the partition table, checked partition by partition | Working |
+| UEFI boot repair after a restore | Working; a deliberately broken disk was made to start again |
+| Booting the restored Windows | Working on every version tested |
+| Refusing unsafe restore targets | Working |
+| Single file recovery out of a backup | Working |
+| Recovery media built from this machine's own Windows recovery files | Working; the media it produces has been booted |
+| Graphical backup window | Working |
+| Graphical recovery wizard, operable from the keyboard alone | Working, driven through a whole restore with no mouse |
+| Cancelling cleanly with Ctrl+C | Working; exits `9 cancelled` and releases the shadow copy it held |
+| Encrypted backups (Argon2id, AES-256-GCM) | Working; command line only, not yet offered in the window |
+| BitLocker: unlocked volume backed up through its shadow copy | Working |
 | BitLocker: locked volume | Refused, with an explanation |
-| Restore point warning before a backup | Measured on a physical machine |
-| Incremental backups | Not implemented, and deliberately not started until the above is proven |
+| Restore point warning before a backup | Working |
+| Incremental backups | Not implemented |
 
-The exact boundary between virtual and physical checks is recorded in
-[`docs/testing.md`](docs/testing.md).
+How each of these was exercised, and in what environment, is recorded in
+[`docs/testing.md`](docs/testing.md) and
+[`docs/vm-testing.md`](docs/vm-testing.md).
 
 ---
 
@@ -106,6 +99,13 @@ MjolnirVSS.exe recovery-media --iso E:\Recovery.iso # make the rescue media
 Or run `MjolnirVSS.exe` with no arguments for the window. Both use the same
 engine, so a bug found in one is the bug the other would have had.
 
+![A backup running: a progress bar, a large percentage, figures for processed, total, speed and time remaining, and a list of stages with the current one marked](docs/images/backup-progress.png)
+
+Every backup verifies itself before it is marked complete, and the result says so
+rather than leaving you to wonder.
+
+![The finished backup: verified, with what was read, what was stored, how long it took and where it went](docs/images/backup-finished.png)
+
 The backup lands in a folder named after the computer and the time, for example
 `DESKTOP-1A2B_2026-09-14_1015`. `--preview <bytes>` captures only the first part
 of each partition so the whole pipeline can be exercised in seconds; a preview
@@ -117,7 +117,7 @@ backup is marked as such and can never be restored.
 
 - Windows 10, Windows 11 or Windows Server, 64 bit. Windows 10 22H2, Windows 11
   24H2, Server 2019 and Server 2025 have each been backed up, restored and
-  booted in a virtual machine
+  booted
 - A UEFI machine with a GPT system disk
 - One physical disk holding Windows
 - An external NTFS drive with room for the backup
@@ -241,6 +241,18 @@ cargo test --workspace
 that the recovery executable does not import `vssapi.dll`, because that library
 does not exist in Windows PE. The release build links the C runtime statically,
 so the Visual C++ Redistributable is not required.
+
+---
+
+## Why the name?
+
+MjolnirVSS got its name from my fondness for Brothers of Metal, a Swedish metal
+band I listen to a lot. Their Norse mythology theme led to Mjölnir — Thor's
+hammer — and the name stuck for a tool built around getting a Windows machine
+back after a hard hit.
+
+The VSS is the Volume Shadow Copy Service, which is the part of Windows that
+makes copying a running disk possible at all.
 
 ---
 
