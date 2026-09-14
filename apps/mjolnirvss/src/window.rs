@@ -31,15 +31,23 @@ use mjolnir_win32_ui::worker::Worker;
 use mjolnir_win32_ui::{message_box, shell};
 
 /// Width of the window at 96 dpi.
-const WINDOW_WIDTH: i32 = 560;
+/// Wide enough for a navigation rail and a content pane that still fits a
+/// four partition disk and a full path without scrolling.
+const WINDOW_WIDTH: i32 = 900;
+
+/// The navigation rail down the left.
+const NAV_WIDTH: i32 = 210;
+/// Where the rail and the content pane both start, measured from the top.
+const NAV_TOP: i32 = 18;
+/// Height of one item in the rail.
+const NAV_ITEM: i32 = 38;
 /// Height of the window at 96 dpi.
-const WINDOW_HEIGHT: i32 = 510;
+const WINDOW_HEIGHT: i32 = 640;
 /// Margin around the content at 96 dpi.
 const MARGIN: i32 = 18;
 /// Height of an ordinary button at 96 dpi.
 const BUTTON_HEIGHT: i32 = 32;
 /// Height of the primary action button at 96 dpi.
-const PRIMARY_HEIGHT: i32 = 52;
 /// Height of one line of text at 96 dpi.
 const LINE: i32 = 20;
 
@@ -48,80 +56,20 @@ const ID_BACKUP: i32 = 1001;
 const ID_RESTORE_FILES: i32 = 1002;
 const ID_RECOVERY_MEDIA: i32 = 1003;
 const ID_SETTINGS: i32 = 1004;
-const ID_EXIT: i32 = 1005;
-const ID_INTRO: i32 = 1006;
-const ID_BACKUP_NOTE: i32 = 1007;
-const ID_RESTORE_FILES_NOTE: i32 = 1008;
-const ID_RECOVERY_MEDIA_NOTE: i32 = 1009;
-const ID_SETTINGS_NOTE: i32 = 1010;
+const ID_HEADING: i32 = 1006;
+const ID_SETTINGS_BODY: i32 = 1007;
+const ID_MEDIA_BODY: i32 = 1008;
 const ID_FOOTER: i32 = 1011;
 
-/// What the program is, before anybody presses anything.
+/// What the Settings section says.
 ///
-/// A window of five unlabelled verbs tells somebody who already knows what it
-/// does. This is for everybody else, and it is the first thing read.
-const INTRO_TEXT: &str =
-    "Copies this computer's Windows disk while Windows is running, so the whole thing can be put back onto a new disk after the old one fails.";
+/// It says there is nothing to set, because there is nothing to set: the
+/// compression, the block size and the digest are not choices a person should
+/// have to make, and MjolnirVSS stores nothing on this computer to configure.
+/// Saying so in the pane is better than a button that opens a box saying it.
+const MEDIA_BODY: &str = "You need something to start a computer from when its disk has failed. MjolnirVSS builds it out of the Windows recovery parts this computer already has; nothing belonging to Microsoft is downloaded or redistributed.\r\n\r\nThe result is an ISO image of about 300 MB. Write it to a USB drive with any tool that writes a bootable image.\r\n\r\nBuild it now, while this computer still works. A computer that will not start cannot build its own rescue media.";
 
-const BACKUP_NOTE: &str =
-    "A complete copy of the Windows disk. You can carry on using the computer while it runs.";
-
-const RESTORE_FILES_NOTE: &str =
-    "Look inside a backup and copy files out of it. Nothing is erased.";
-
-const RECOVERY_MEDIA_NOTE: &str =
-    "Make the bootable disc you will need if this computer will not start. Do it before you need it.";
-
-const SETTINGS_NOTE: &str = "Nothing to configure yet.";
-
-/// The line along the bottom.
-///
-/// The version is there because the first question about a backup taken a year
-/// ago is which version took it, and the rest is the promise the product is
-/// built around.
-/// Where each thing on the main menu goes: `(top, height)`, in order.
-///
-/// Pure, and separate from the window, because the thing that was wrong with
-/// this screen could be measured: five buttons used the top half and the rest
-/// was grey. A layout that can be checked is a layout that can be checked for
-/// that.
-///
-/// The order is fixed: intro, then each action with its line under it, then the
-/// footer, which is pinned to the bottom rather than left to follow the
-/// buttons, so the window has a floor.
-fn menu_rows(height: i32, s: &dyn Fn(i32) -> i32) -> [(i32, i32); 11] {
-    let line = s(LINE);
-    let gap = s(14);
-    let mut rows = [(0, 0); 11];
-    let mut y = s(MARGIN);
-
-    let put = |index: usize, rows: &mut [(i32, i32); 11], y: &mut i32, h: i32, after: i32| {
-        rows[index] = (*y, h);
-        *y += h + after;
-    };
-
-    // What this is, before any of the verbs.
-    put(0, &mut rows, &mut y, line * 2, s(16));
-    // The primary action is taller and alone, so there is never a question
-    // about what to press. Each action carries its line four pixels under it.
-    put(1, &mut rows, &mut y, s(PRIMARY_HEIGHT), s(4));
-    put(2, &mut rows, &mut y, line, gap);
-    for pair in [(3, 4), (5, 6), (7, 8)] {
-        put(pair.0, &mut rows, &mut y, s(BUTTON_HEIGHT), s(4));
-        put(pair.1, &mut rows, &mut y, line, gap);
-    }
-    // Exit explains itself.
-    put(9, &mut rows, &mut y, s(BUTTON_HEIGHT), gap);
-
-    // Pinned to the bottom so the window has a floor. `height` is the client
-    // area, which is shorter than the window: nothing here adjusts for the
-    // title bar, so a footer pinned against a window sized rectangle landed on
-    // top of the Exit button. Taking whichever is lower means it can never do
-    // that again, whatever the window is sized to.
-    let pinned = height - s(MARGIN) - line;
-    rows[10] = (pinned.max(y), line);
-    rows
-}
+const SETTINGS_BODY: &str = "There is nothing to configure yet.\r\n\r\nMjolnirVSS chooses its own compression and block size, and stores nothing on this computer. It writes only to the folder you choose for a backup.\r\n\r\nEncryption is set per backup, from the command line, with --encrypt.";
 
 fn footer_text() -> String {
     format!(
@@ -138,7 +86,6 @@ const ID_NAME_LABEL: i32 = 1104;
 const ID_NAME_EDIT: i32 = 1105;
 const ID_SPACE: i32 = 1106;
 const ID_START: i32 = 1107;
-const ID_DEST_BACK: i32 = 1108;
 
 const ID_STAGE: i32 = 1200;
 const ID_PROGRESS: i32 = 1201;
@@ -174,30 +121,57 @@ const EN_CHANGE: u32 = 0x0300;
 /// Which screen is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
-    Menu,
-    Destination,
+    /// Backing this computer up: what would be copied, and where to put it.
+    Backup,
     Progress,
     Result,
     Browse,
+    Media,
+    Settings,
+}
+
+impl Screen {
+    /// Which navigation item is lit while this screen is open.
+    ///
+    /// Progress and Result belong to the section that started them, so the rail
+    /// does not appear to jump somewhere else while a backup runs.
+    fn section(self) -> Screen {
+        match self {
+            Screen::Progress | Screen::Result => Screen::Backup,
+            other => other,
+        }
+    }
+
+    /// The heading at the top of the content pane.
+    fn title(self) -> &'static str {
+        match self.section() {
+            Screen::Backup => "Back up this PC",
+            Screen::Browse => "Restore files",
+            Screen::Media => "Recovery media",
+            Screen::Settings => "Settings",
+            // Unreachable: section() only ever returns the three above.
+            _ => "MjolnirVSS",
+        }
+    }
 }
 
 /// Every control in the window. Created once, shown per screen.
 #[derive(Default)]
 struct Controls {
+    // The navigation rail down the left, in the order it is drawn. These four
+    // are always on screen: the window has no separate menu to return to, so
+    // whichever section is open, the way to every other one is still visible.
     backup: HWND,
     restore_files: HWND,
     recovery_media: HWND,
     settings: HWND,
-    exit: HWND,
 
-    // The menu's words. Five buttons on their own say what they do only to
-    // somebody who already knows; a line under each says it to everybody else,
-    // and costs nothing to ignore.
-    intro: HWND,
-    backup_note: HWND,
-    restore_files_note: HWND,
-    recovery_media_note: HWND,
-    settings_note: HWND,
+    /// The section's name, at the top of the content pane.
+    heading: HWND,
+    /// What the Recovery media section explains before anything is built.
+    media_body: HWND,
+    /// What the Settings section has to say for itself.
+    settings_body: HWND,
     footer: HWND,
 
     summary: HWND,
@@ -208,7 +182,6 @@ struct Controls {
     name_edit: HWND,
     space: HWND,
     start: HWND,
-    dest_back: HWND,
 
     stage: HWND,
     progress: HWND,
@@ -232,13 +205,12 @@ struct Controls {
 }
 
 impl Controls {
-    fn all(&self) -> [HWND; 37] {
+    fn all(&self) -> [HWND; 33] {
         [
             self.backup,
             self.restore_files,
             self.recovery_media,
             self.settings,
-            self.exit,
             self.summary,
             self.dest_label,
             self.dest_edit,
@@ -247,7 +219,6 @@ impl Controls {
             self.name_edit,
             self.space,
             self.start,
-            self.dest_back,
             self.stage,
             self.progress,
             self.stats,
@@ -265,47 +236,50 @@ impl Controls {
             self.browse_up,
             self.browse_extract,
             self.browse_back,
-            self.intro,
-            self.backup_note,
-            self.restore_files_note,
-            self.recovery_media_note,
-            self.settings_note,
+            self.heading,
+            self.media_body,
+            self.settings_body,
             self.footer,
         ]
     }
 
-    /// The things the main menu can actually do.
+    /// The sections, in the order the rail lists them.
     ///
-    /// Five, and the product says five. The text around them is not an action
-    /// and must never become one; [`Self::for_screen`] shows both, so this is
-    /// what the promise is checked against.
-    fn menu_actions(&self) -> [HWND; 5] {
+    /// Four, and the rail shows four. Anything that is not one of these is
+    /// content, not navigation, and belongs in the pane on the right.
+    fn sections(&self) -> [HWND; 4] {
         [
             self.backup,
             self.restore_files,
             self.recovery_media,
             self.settings,
-            self.exit,
+        ]
+    }
+
+    /// The navigation rail and the furniture around it, which every screen has.
+    fn always_visible(&self) -> [HWND; 6] {
+        [
+            self.backup,
+            self.restore_files,
+            self.recovery_media,
+            self.settings,
+            self.heading,
+            self.footer,
         ]
     }
 
     fn for_screen(&self, screen: Screen) -> Vec<HWND> {
+        let mut shown = self.always_visible().to_vec();
+        shown.extend(self.content_of(screen));
+        shown
+    }
+
+    /// What the content pane holds, which is everything but the rail.
+    fn content_of(&self, screen: Screen) -> Vec<HWND> {
         match screen {
-            Screen::Menu => {
-                // Built from the five actions rather than listing them again,
-                // so the menu and the promise about it cannot drift apart.
-                let mut menu = self.menu_actions().to_vec();
-                menu.extend([
-                    self.intro,
-                    self.backup_note,
-                    self.restore_files_note,
-                    self.recovery_media_note,
-                    self.settings_note,
-                    self.footer,
-                ]);
-                menu
-            }
-            Screen::Destination => vec![
+            Screen::Media => vec![self.media_body, self.make_media],
+            Screen::Settings => vec![self.settings_body],
+            Screen::Backup => vec![
                 self.summary,
                 self.dest_label,
                 self.dest_edit,
@@ -314,7 +288,6 @@ impl Controls {
                 self.name_edit,
                 self.space,
                 self.start,
-                self.dest_back,
             ],
             Screen::Progress => vec![
                 self.stage,
@@ -498,7 +471,7 @@ impl BackupWindow {
         let font = sys::ui_font(sys::dpi_of(window.raw()));
         let mut me = Self {
             font,
-            screen: Screen::Menu,
+            screen: Screen::Backup,
             controls: Controls::default(),
             plan: None,
             worker: None,
@@ -533,43 +506,26 @@ impl BackupWindow {
             f,
         );
         c.settings = sys::create_control(h, ControlKind::Button, "Settings", ID_SETTINGS, f);
-        c.exit = sys::create_control(h, ControlKind::Button, "Exit", ID_EXIT, f);
-
-        c.intro = sys::create_control(h, ControlKind::Label, INTRO_TEXT, ID_INTRO, f);
-        c.backup_note = sys::create_control(h, ControlKind::Label, BACKUP_NOTE, ID_BACKUP_NOTE, f);
-        c.restore_files_note = sys::create_control(
-            h,
-            ControlKind::Label,
-            RESTORE_FILES_NOTE,
-            ID_RESTORE_FILES_NOTE,
-            f,
-        );
-        c.recovery_media_note = sys::create_control(
-            h,
-            ControlKind::Label,
-            RECOVERY_MEDIA_NOTE,
-            ID_RECOVERY_MEDIA_NOTE,
-            f,
-        );
-        c.settings_note =
-            sys::create_control(h, ControlKind::Label, SETTINGS_NOTE, ID_SETTINGS_NOTE, f);
+        c.heading = sys::create_control(h, ControlKind::Label, "", ID_HEADING, f);
+        c.media_body = sys::create_control(h, ControlKind::TextArea, MEDIA_BODY, ID_MEDIA_BODY, f);
+        c.settings_body =
+            sys::create_control(h, ControlKind::TextArea, SETTINGS_BODY, ID_SETTINGS_BODY, f);
         c.footer = sys::create_control(h, ControlKind::Label, &footer_text(), ID_FOOTER, f);
 
         c.summary = sys::create_control(h, ControlKind::TextArea, "", ID_SUMMARY, f);
         c.dest_label = sys::create_control(
             h,
             ControlKind::Label,
-            "Save the backup to:",
+            "Save the backup to",
             ID_DEST_LABEL,
             f,
         );
         c.dest_edit = sys::create_control(h, ControlKind::TextBox, "", ID_DEST_EDIT, f);
-        c.dest_browse = sys::create_control(h, ControlKind::Button, "Browse...", ID_DEST_BROWSE, f);
-        c.name_label = sys::create_control(h, ControlKind::Label, "Backup name:", ID_NAME_LABEL, f);
+        c.dest_browse = sys::create_control(h, ControlKind::Button, "Browse…", ID_DEST_BROWSE, f);
+        c.name_label = sys::create_control(h, ControlKind::Label, "Backup name", ID_NAME_LABEL, f);
         c.name_edit = sys::create_control(h, ControlKind::TextBox, "", ID_NAME_EDIT, f);
         c.space = sys::create_control(h, ControlKind::Label, "", ID_SPACE, f);
         c.start = sys::create_control(h, ControlKind::DefaultButton, "Start backup", ID_START, f);
-        c.dest_back = sys::create_control(h, ControlKind::Button, "Back", ID_DEST_BACK, f);
 
         c.stage = sys::create_control(h, ControlKind::Label, "", ID_STAGE, f);
         c.progress = sys::create_control(h, ControlKind::ProgressBar, "", ID_PROGRESS, f);
@@ -596,13 +552,8 @@ impl BackupWindow {
         c.browse_list = sys::create_control(h, ControlKind::ListBox, "", ID_BROWSE_LIST, f);
         c.browse_open = sys::create_control(h, ControlKind::Button, "Open", ID_BROWSE_OPEN, f);
         c.browse_up = sys::create_control(h, ControlKind::Button, "Up", ID_BROWSE_UP, f);
-        c.browse_extract = sys::create_control(
-            h,
-            ControlKind::DefaultButton,
-            "Copy out...",
-            ID_BROWSE_EXTRACT,
-            f,
-        );
+        c.browse_extract =
+            sys::create_control(h, ControlKind::DefaultButton, "Copy…", ID_BROWSE_EXTRACT, f);
         c.browse_back = sys::create_control(h, ControlKind::Button, "Back", ID_BROWSE_BACK, f);
     }
 
@@ -615,6 +566,30 @@ impl BackupWindow {
         if screen == Screen::Progress {
             sys::show(self.controls.details, self.show_details);
         }
+
+        // Which rail item is lit, and what the pane is called.
+        let active = screen.section();
+        for (hwnd, label, of) in [
+            (self.controls.backup, "Back up", Screen::Backup),
+            (self.controls.restore_files, "Restore files", Screen::Browse),
+            (
+                self.controls.recovery_media,
+                "Recovery media",
+                Screen::Media,
+            ),
+            (self.controls.settings, "Settings", Screen::Settings),
+        ] {
+            let mark = if of == active { "▸" } else { " " };
+            sys::set_text(hwnd, &format!("{mark}  {label}"));
+        }
+        sys::set_text(self.controls.heading, screen.title());
+
+        // A backup that is running is not the moment to wander into another
+        // section, so the rail is unavailable until it has finished.
+        for hwnd in self.controls.sections() {
+            sys::enable(hwnd, !matches!(screen, Screen::Progress));
+        }
+
         self.layout(window);
 
         // Where the keyboard goes, and what Enter means, for each screen. Enter
@@ -622,8 +597,9 @@ impl BackupWindow {
         // the dialog manager asks before turning Enter into a button press, so
         // without this it works only while a button already has the keyboard.
         let (focus, default) = match screen {
-            Screen::Menu => (self.controls.backup, ID_BACKUP),
-            Screen::Destination => (self.controls.start, ID_START),
+            Screen::Backup => (self.controls.start, ID_START),
+            Screen::Media => (self.controls.make_media, ID_MAKE_MEDIA),
+            Screen::Settings => (self.controls.settings, ID_SETTINGS),
             Screen::Progress => (self.controls.cancel, ID_CANCEL),
             Screen::Result => (self.controls.close, ID_CLOSE),
             Screen::Browse => (self.controls.browse_list, ID_BROWSE_OPEN),
@@ -638,31 +614,31 @@ impl BackupWindow {
         let s = |v: i32| sys::scale(v, dpi);
         let client: RECT = window.client_rect();
         let width = client.right - client.left;
-        let inner = width - s(MARGIN) * 2;
-        let x = s(MARGIN);
         let c = &self.controls;
 
+        // The rail down the left, then a content pane that every screen lays
+        // itself out inside. `x` and `inner` are the pane's, not the window's,
+        // so each screen below is written as though the rail were not there.
+        let rail = s(NAV_WIDTH);
+        let x = rail + s(MARGIN);
+        let inner = width - x - s(MARGIN);
+
+        let mut ny = s(NAV_TOP);
+        for hwnd in c.sections() {
+            sys::place(hwnd, sys::rect(s(10), ny, rail - s(20), s(NAV_ITEM)));
+            ny += s(NAV_ITEM) + s(6);
+        }
+
+        // The section's name, then a rule under it, then the pane.
+        sys::place(c.heading, sys::rect(x, s(NAV_TOP), inner, s(28)));
+        let foot_y = client.bottom - s(MARGIN) - s(LINE);
+        sys::place(c.footer, sys::rect(x, foot_y, inner, s(LINE)));
+        // Nothing a screen lays out may reach below this.
+        let floor = foot_y - s(12);
+
         match self.screen {
-            Screen::Menu => {
-                let rows = menu_rows(client.bottom - client.top, &s);
-                for (row, hwnd) in rows.iter().zip([
-                    c.intro,
-                    c.backup,
-                    c.backup_note,
-                    c.restore_files,
-                    c.restore_files_note,
-                    c.recovery_media,
-                    c.recovery_media_note,
-                    c.settings,
-                    c.settings_note,
-                    c.exit,
-                    c.footer,
-                ]) {
-                    sys::place(hwnd, sys::rect(x, row.0, inner, row.1));
-                }
-            }
-            Screen::Destination => {
-                let mut y = s(MARGIN);
+            Screen::Backup => {
+                let mut y = s(NAV_TOP) + s(36);
                 // Tall enough to show a four partition disk without scrolling,
                 // which is what a normal Windows machine has. The box used to
                 // be seven lines and hid the last two behind a scroll bar, on
@@ -691,8 +667,7 @@ impl BackupWindow {
 
                 sys::place(c.space, sys::rect(x, y, inner, s(LINE) * 3));
 
-                let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
-                sys::place(c.dest_back, sys::rect(x, bottom, s(90), s(BUTTON_HEIGHT)));
+                let bottom = floor - s(BUTTON_HEIGHT);
                 let start_width = s(150);
                 sys::place(
                     c.start,
@@ -704,12 +679,30 @@ impl BackupWindow {
                     ),
                 );
             }
+            Screen::Media => {
+                let y = s(NAV_TOP) + s(36);
+                let button = s(BUTTON_HEIGHT) + s(8);
+                sys::place(c.media_body, sys::rect(x, y, inner, floor - y - button));
+                sys::place(
+                    c.make_media,
+                    sys::rect(
+                        x,
+                        client.bottom - s(MARGIN) - s(LINE) - button,
+                        s(220),
+                        s(BUTTON_HEIGHT),
+                    ),
+                );
+            }
+            Screen::Settings => {
+                let y = s(NAV_TOP) + s(36);
+                sys::place(c.settings_body, sys::rect(x, y, inner, floor - y));
+            }
             Screen::Browse => {
-                let mut y = s(MARGIN);
+                let mut y = s(NAV_TOP) + s(36);
                 sys::place(c.browse_path, sys::rect(x, y, inner, s(LINE) * 2));
                 y += s(LINE) * 2 + s(8);
 
-                let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
+                let bottom = floor - s(BUTTON_HEIGHT);
                 let list_height = (bottom - y - s(12)).max(s(80));
                 sys::place(c.browse_list, sys::rect(x, y, inner, list_height));
 
@@ -749,7 +742,7 @@ impl BackupWindow {
                 sys::place(c.details_toggle, sys::rect(x, y, s(120), s(BUTTON_HEIGHT)));
                 y += s(BUTTON_HEIGHT) + s(8);
 
-                let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
+                let bottom = floor - s(BUTTON_HEIGHT);
                 if self.show_details {
                     let height = (bottom - y - s(12)).max(s(40));
                     sys::place(c.details, sys::rect(x, y, inner, height));
@@ -770,7 +763,7 @@ impl BackupWindow {
                 sys::place(c.result_title, sys::rect(x, y, inner, s(LINE) + s(8)));
                 y += s(LINE) + s(16);
 
-                let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
+                let bottom = floor - s(BUTTON_HEIGHT);
                 let body_height = (bottom - y - s(12)).max(s(60));
                 sys::place(c.result_body, sys::rect(x, y, inner, body_height));
 
@@ -820,7 +813,7 @@ impl BackupWindow {
                 sys::set_text(self.controls.name_edit, name.as_str());
                 self.plan = Some(plan);
                 self.update_space_label(window);
-                self.show_screen(window, Screen::Destination);
+                self.show_screen(window, Screen::Backup);
             }
             Err(e) => message_box::error_for(window.raw(), "MjolnirVSS", &e),
         }
@@ -940,7 +933,7 @@ impl BackupWindow {
 
         self.plan = Some(plan.clone());
         self.finished = None;
-        sys::set_text(self.controls.stage, "Starting...");
+        sys::set_text(self.controls.stage, "Starting…");
         sys::set_text(self.controls.stats, "");
         sys::set_text(self.controls.details, "");
         sys::set_progress(self.controls.progress, 0);
@@ -963,9 +956,9 @@ impl BackupWindow {
 
         let snapshot = worker.progress().read();
         let stage = if worker.is_cancelling() && !worker.is_finished() {
-            "Cancelling...".to_owned()
+            "Stopping…".to_owned()
         } else if snapshot.stage.is_empty() {
-            "Starting...".to_owned()
+            "Starting…".to_owned()
         } else {
             snapshot.stage.clone()
         };
@@ -1049,9 +1042,9 @@ impl BackupWindow {
                         if e.exit() != ExitCode::Cancelled {
                             message_box::error_for(window.raw(), "MjolnirVSS", &e);
                         }
-                        self.show_screen(window, Screen::Menu);
+                        self.show_screen(window, Screen::Backup);
                     }
-                    (Ok(_), None) => self.show_screen(window, Screen::Menu),
+                    (Ok(_), None) => self.show_screen(window, Screen::Backup),
                 }
                 return;
             }
@@ -1191,7 +1184,7 @@ impl BackupWindow {
         };
 
         self.finished = None;
-        sys::set_text(self.controls.stage, "Starting...");
+        sys::set_text(self.controls.stage, "Starting…");
         sys::set_text(self.controls.stats, "");
         sys::set_text(self.controls.details, "");
         sys::set_progress(self.controls.progress, 0);
@@ -1571,7 +1564,7 @@ impl BackupWindow {
     fn request_cancel(&mut self) {
         if let Some(worker) = &self.worker {
             worker.cancel();
-            sys::set_text(self.controls.stage, "Cancelling...");
+            sys::set_text(self.controls.stage, "Stopping…");
             sys::set_text(self.controls.cancel, "Cancelling");
             sys::enable(self.controls.cancel, false);
             sys::set_progress_state(self.controls.progress, ProgressState::Paused);
@@ -1581,7 +1574,10 @@ impl BackupWindow {
 
 impl WindowHandler for BackupWindow {
     fn on_create(&mut self, window: &Window) {
-        self.show_screen(window, Screen::Menu);
+        // The window opens on the backup section, so the plan is built before
+        // it is shown: there is no menu click left to trigger it, and the one
+        // pane whose job is to say what would be copied must not open empty.
+        self.begin_backup_setup(window);
     }
 
     fn on_layout(&mut self, window: &Window) {
@@ -1596,25 +1592,22 @@ impl WindowHandler for BackupWindow {
 
     fn on_command(&mut self, window: &Window, id: i32, notification: u32) {
         match (id, notification) {
+            // Re-planned on every visit: a drive may have been plugged in or
+            // taken away since the window opened, and a stale plan is worse
+            // than a slow one.
             (ID_BACKUP, _) => self.begin_backup_setup(window),
-            (ID_RECOVERY_MEDIA, _) | (ID_MAKE_MEDIA, _) => self.make_recovery_media(window),
+            (ID_RECOVERY_MEDIA, _) => self.show_screen(window, Screen::Media),
+            (ID_MAKE_MEDIA, _) => self.make_recovery_media(window),
             (ID_RESTORE_FILES, _) => self.browse_backup(window),
-            (ID_BROWSE_OPEN, _) | (ID_BROWSE_LIST, LBN_DBLCLK) => {
-                self.browse_open_selected(window)
-            }
+            (ID_BROWSE_OPEN, _) | (ID_BROWSE_LIST, LBN_DBLCLK) => self.browse_open_selected(window),
             (ID_BROWSE_UP, _) => self.browse_up(window),
             (ID_BROWSE_EXTRACT, _) => self.browse_extract(window),
             (ID_BROWSE_BACK, _) => {
                 self.browsing = None;
-                self.show_screen(window, Screen::Menu);
+                self.show_screen(window, Screen::Backup);
             }
-            (ID_SETTINGS, _) => message_box::info(
-                window.raw(),
-                "MjolnirVSS",
-                "There is nothing to configure yet.\n\nMjolnirVSS chooses its own compression and block size, and stores nothing on this computer.",
-            ),
-            (ID_EXIT, _) | (ID_CLOSE, _) => window.request_close(),
-            (ID_DEST_BACK, _) => self.show_screen(window, Screen::Menu),
+            (ID_SETTINGS, _) => self.show_screen(window, Screen::Settings),
+            (ID_CLOSE, _) => window.request_close(),
             (ID_DEST_BROWSE, _) => self.browse_for_folder(window),
             (ID_DEST_EDIT, EN_CHANGE) => self.update_space_label(window),
             (ID_START, _) => self.start_backup(window),
@@ -1715,7 +1708,10 @@ mod tests {
             ID_RESTORE_FILES,
             ID_RECOVERY_MEDIA,
             ID_SETTINGS,
-            ID_EXIT,
+            ID_HEADING,
+            ID_SETTINGS_BODY,
+            ID_MEDIA_BODY,
+            ID_FOOTER,
             ID_SUMMARY,
             ID_DEST_LABEL,
             ID_DEST_EDIT,
@@ -1724,7 +1720,6 @@ mod tests {
             ID_NAME_EDIT,
             ID_SPACE,
             ID_START,
-            ID_DEST_BACK,
             ID_STAGE,
             ID_PROGRESS,
             ID_STATS,
@@ -1744,146 +1739,74 @@ mod tests {
         assert_eq!(before, sorted.len(), "two controls share an identifier");
     }
 
-    /// The product promises five things on the main window. Words were added
-    /// around them; the count of things that can be *done* must not move.
-    #[test]
-    fn the_main_menu_has_exactly_the_five_documented_items() {
-        let controls = Controls::default();
-        assert_eq!(controls.menu_actions().len(), 5);
-    }
-
-    /// Every control the menu screen shows has to be one of the five actions or
-    /// one of the six pieces of text, so a stray control cannot appear there.
-    #[test]
-    fn the_menu_screen_shows_only_its_actions_and_its_words() {
-        let controls = Controls::default();
-        assert_eq!(controls.for_screen(Screen::Menu).len(), 5 + 6);
-    }
-
-    /// The text has to say something. An empty label is a gap in the window
-    /// that looks like a bug.
-    #[test]
-    fn the_menu_text_is_not_empty() {
-        for text in [
-            INTRO_TEXT,
-            BACKUP_NOTE,
-            RESTORE_FILES_NOTE,
-            RECOVERY_MEDIA_NOTE,
-            SETTINGS_NOTE,
-        ] {
-            assert!(text.len() > 10, "{text:?}");
-            assert!(!text.contains("  "), "double space in {text:?}");
-        }
-        let footer = footer_text();
-        assert!(
-            footer.contains(mjolnir_core::TOOL_VERSION),
-            "the footer should name the version: {footer}"
-        );
-    }
-
     #[test]
     fn the_default_backup_name_is_usable_as_a_folder() {
         let name = default_name();
         assert!(BackupName::new(name.as_str()).is_ok(), "{name}");
     }
-    /// The client area is shorter than the window, because nothing adjusts for
-    /// the title bar and border. Laying out against the window height is what
-    /// put the footer on top of the Exit button, so the tests measure against
-    /// something smaller than `WINDOW_HEIGHT`, as the real screen does.
-    const CHROME: i32 = 40;
-
-    /// The complaint this screen was reworked for: five buttons occupied the
-    /// top 230 pixels of a 460 pixel window and the rest was empty grey.
+    /// The rail lists the sections and nothing else. Anything that is not one
+    /// of these four is content, and belongs in the pane on the right.
     #[test]
-    fn the_menu_fills_its_window() {
-        let height = WINDOW_HEIGHT - CHROME;
-        let rows = menu_rows(height, &|v| v);
-        let last_before_footer = rows[9].0 + rows[9].1;
-        let footer_top = rows[10].0;
-
-        assert!(
-            last_before_footer > height / 2,
-            "the menu still stops in the top half: {last_before_footer} of {height}"
-        );
-        assert!(
-            footer_top > last_before_footer,
-            "the footer must sit below the buttons, not on top of them"
-        );
-        assert!(
-            rows[10].0 + rows[10].1 <= height - MARGIN + 1,
-            "the footer runs off the bottom"
-        );
+    fn the_rail_has_exactly_four_sections() {
+        assert_eq!(Controls::default().sections().len(), 4);
     }
 
-    /// Nothing on the menu may sit on top of anything else, at any scale, and
-    /// in a client area shorter than the window it was sized from.
+    /// Every screen shows the rail, so there is always a way to every other
+    /// section. A screen that hid it would strand somebody on it.
     #[test]
-    fn nothing_on_the_menu_overlaps() {
-        for factor in [1, 2, 3] {
-            let height = (WINDOW_HEIGHT - CHROME) * factor;
-            let rows = menu_rows(height, &|v| v * factor);
-            for pair in rows.windows(2) {
-                let (top, size) = pair[0];
-                let (next_top, _) = pair[1];
-                assert!(size > 0, "a row with no height at scale {factor}");
-                assert!(
-                    top + size <= next_top,
-                    "rows overlap at scale {factor}: {top}+{size} runs into {next_top}"
-                );
+    fn the_rail_is_on_every_screen() {
+        let c = Controls::default();
+        for screen in [
+            Screen::Backup,
+            Screen::Progress,
+            Screen::Result,
+            Screen::Browse,
+            Screen::Media,
+            Screen::Settings,
+        ] {
+            let shown = c.for_screen(screen);
+            for hwnd in c.always_visible() {
+                assert!(shown.contains(&hwnd), "{screen:?} hides part of the rail");
             }
         }
     }
 
-    /// Every action keeps its line directly under it, which is what makes the
-    /// line read as belonging to the button rather than to the next one.
+    /// Progress and Result belong to the section that started them, so the rail
+    /// does not appear to jump elsewhere while a backup runs.
     #[test]
-    fn each_note_sits_under_its_own_button() {
-        let rows = menu_rows(WINDOW_HEIGHT - CHROME, &|v| v);
-        for (button, note) in [(1, 2), (3, 4), (5, 6), (7, 8)] {
-            let below = rows[note].0 - (rows[button].0 + rows[button].1);
-            assert!(
-                (0..=6).contains(&below),
-                "note {note} sits {below} pixels under button {button}"
-            );
-        }
+    fn a_running_job_keeps_the_section_it_started_from() {
+        assert_eq!(Screen::Progress.section(), Screen::Backup);
+        assert_eq!(Screen::Result.section(), Screen::Backup);
+        assert_eq!(Screen::Browse.section(), Screen::Browse);
+        assert_eq!(Screen::Settings.section(), Screen::Settings);
     }
 
-    /// A window far shorter than the content still may not stack the footer on
-    /// a button. It may run out of room; it may not lie about where things are.
+    /// Headings are sentence case and carry no ending punctuation, which is
+    /// what Microsoft's own interface text guidance asks for.
     #[test]
-    fn a_short_window_never_stacks_the_footer_on_a_button() {
-        for height in [120, 200, 300, WINDOW_HEIGHT - CHROME, 900] {
-            let rows = menu_rows(height, &|v| v);
-            let exit = rows[9];
-            assert!(
-                rows[10].0 >= exit.0 + exit.1,
-                "at {height} the footer at {} lands on Exit at {}..{}",
-                rows[10].0,
-                exit.0,
-                exit.0 + exit.1
-            );
-        }
-    }
-
-    /// Each line under a button has to fit on one line.
-    ///
-    /// A character budget rather than a measured width, which is a proxy: the
-    /// real check is the screenshot. It exists because one of these notes
-    /// shipped a sentence that ran off the right edge and was cut mid word, and
-    /// a budget catches the next one before a virtual machine has to.
-    #[test]
-    fn every_note_fits_on_one_line() {
-        for note in [
-            BACKUP_NOTE,
-            RESTORE_FILES_NOTE,
-            RECOVERY_MEDIA_NOTE,
-            SETTINGS_NOTE,
+    fn every_heading_reads_like_a_heading() {
+        for screen in [
+            Screen::Backup,
+            Screen::Browse,
+            Screen::Media,
+            Screen::Settings,
         ] {
+            let title = screen.title();
+            assert!(!title.is_empty());
             assert!(
-                note.len() <= 95,
-                "{} characters will not fit on one line: {note:?}",
-                note.len()
+                !title.ends_with('.') && !title.ends_with(':'),
+                "a heading should not end in punctuation: {title:?}"
             );
+            // Sentence case: only the first word is capitalised. Acronyms and
+            // proper nouns keep their own capitals, so they are allowed.
+            for word in title.split_whitespace().skip(1) {
+                let acronym = word.chars().all(|c| c.is_uppercase() || !c.is_alphabetic());
+                let proper = ["Windows", "BitLocker", "MjolnirVSS"].contains(&word);
+                assert!(
+                    acronym || proper || !word.starts_with(char::is_uppercase),
+                    "headings are sentence case, not title case: {title:?}"
+                );
+            }
         }
     }
 }
