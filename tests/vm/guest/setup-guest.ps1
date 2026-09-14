@@ -107,6 +107,27 @@ try {
     # not cleanly dismounted when fast startup is used, which would make the
     # first restore test measure two things at once. It is turned back on in a
     # later test on purpose.
+    # Server opens Server Manager at every logon and, after an unclean stop, the
+    # Shutdown Event Tracker on top of it. Both take the keyboard from whatever
+    # is running, seconds after it starts, and a test driven through a virtual
+    # keyboard then types into the wrong window. Turning them off is not
+    # cosmetic: it is what makes a server test repeatable.
+    Report 'stopping server manager and the shutdown tracker opening themselves'
+    try {
+        $sm = Join-Path HKLM: (Join-Path SOFTWARE (Join-Path Microsoft ServerManager))
+        if (Test-Path $sm) {
+            New-ItemProperty -Path $sm -Name DoNotOpenServerManagerAtLogon `
+                -Value 1 -PropertyType DWord -Force | Out-Null
+        }
+        $reliability = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
+        if (-not (Test-Path $reliability)) { New-Item -Path $reliability -Force | Out-Null }
+        foreach ($name in 'ShutdownReasonOn', 'ShutdownReasonUI') {
+            New-ItemProperty -Path $reliability -Name $name -Value 0 -PropertyType DWord -Force | Out-Null
+        }
+    } catch {
+        Report "could not quieten the server dialogs: $_"
+    }
+
     Report 'turning hibernation off'
     & powercfg.exe /hibernate off 2>&1 | Out-Null
     & powercfg.exe /change standby-timeout-ac 0 2>&1 | Out-Null
