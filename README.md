@@ -16,7 +16,7 @@ remains.
 | | |
 |---|---|
 | **Version** | `0.1.0-alpha.1` — see [`CHANGELOG.md`](CHANGELOG.md) |
-| **Download** | [v0.1.0-alpha.1](https://github.com/carlbomsdata/MjolnirVSS/releases/latest), a portable folder for 64 bit Windows, or [build it yourself](#building) |
+| **Download** | [v0.1.0-alpha.1](https://github.com/carlbomsdata/MjolnirVSS/releases/tag/v0.1.0-alpha.1), a portable folder for 64 bit Windows, or [build it yourself](#building) |
 | **Tested end to end** | Backup, verify, restore and boot, on Windows 10, Windows 11, Server 2019 and Server 2025 |
 | **Licence** | GPL-3.0-or-later |
 
@@ -89,15 +89,13 @@ How each of these was exercised, and in what environment, is recorded in
 
 ## Quick start
 
-Download the [latest release][release], unpack it anywhere, and run it. Nothing
-is installed. A SHA-256 sum is published beside the archive, so you can check
-what you downloaded is what was built:
+Download [v0.1.0-alpha.1](https://github.com/carlbomsdata/MjolnirVSS/releases/tag/v0.1.0-alpha.1),
+unpack it anywhere, and run it. Nothing is installed. A SHA-256 sum is published
+beside the archive, so you can check that what you downloaded is what was built:
 
 ```powershell
 (Get-FileHash .\MjolnirVSS-0.1.0-alpha.1-windows-x64.zip -Algorithm SHA256).Hash
 ```
-
-[release]: https://github.com/carlbomsdata/MjolnirVSS/releases/latest
 
 ```powershell
 MjolnirVSS.exe inspect                              # what would be copied
