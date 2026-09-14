@@ -13,12 +13,15 @@ use mjolnir_core::error::{Error, Result};
 use mjolnir_core::exit::ExitCode;
 use mjolnir_core::progress::format_bytes;
 use mjolnir_restore::{EraseConfirmation, RestoreOutcome, RestorePlan, TargetDisk};
-use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Gdi::HFONT;
+use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 
 use mjolnir_win32_ui::message_box;
+use mjolnir_win32_ui::paint::{Canvas, Glyph, ItemStyle};
 use mjolnir_win32_ui::sys::{self, ControlKind, ProgressState};
-use mjolnir_win32_ui::window::{Window, WindowConfig, WindowHandler};
+use mjolnir_win32_ui::theme::{self, Metrics, Palette, TextStyle};
+use mjolnir_win32_ui::window::{
+    set_item_style, set_label_colours, Window, WindowConfig, WindowHandler,
+};
 use mjolnir_win32_ui::worker::Worker;
 
 use crate::discover::{self, FoundBackup};
@@ -28,11 +31,15 @@ const LBN_SELCHANGE: u32 = 1;
 /// Notification a text box sends when its contents change.
 const EN_CHANGE: u32 = 0x0300;
 
-const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 520;
-const MARGIN: i32 = 18;
-const BUTTON_HEIGHT: i32 = 32;
-const LINE: i32 = 20;
+const WINDOW_WIDTH: i32 = 820;
+const WINDOW_HEIGHT: i32 = 660;
+/// Margin between the content and the edge of the window.
+const MARGIN: i32 = Metrics::PAGE_MARGIN;
+const BUTTON_HEIGHT: i32 = Metrics::BUTTON_HEIGHT;
+/// Height of the dark band across the top of the wizard.
+const HEADER: i32 = 62;
+/// Height of the line under the step's heading, which runs to two lines.
+const SUBTITLE: i32 = 40;
 
 const ID_TITLE: i32 = 2000;
 const ID_BODY: i32 = 2001;
@@ -46,6 +53,9 @@ const ID_STAGE: i32 = 2008;
 const ID_REFRESH: i32 = 2009;
 const ID_EXIT: i32 = 2010;
 const ID_PASSWORD_EDIT: i32 = 2011;
+const ID_HEADER_TITLE: i32 = 2012;
+const ID_HEADER_STEP: i32 = 2013;
+const ID_SUBTITLE: i32 = 2014;
 
 const TIMER_PROGRESS: usize = 1;
 const TIMER_INTERVAL: u32 = 200;
@@ -79,16 +89,60 @@ enum Step {
 }
 
 impl Step {
+    /// The heading at the top of the content area.
+    ///
+    /// The step number lives in the band across the top rather than in the
+    /// heading, so the heading can say what the operator is actually doing.
     fn title(self) -> &'static str {
         match self {
-            Step::FindBackup => "Step 1 of 5:  Find a backup",
-            Step::SelectBackup => "Step 2 of 5:  Choose the backup to restore",
-            Step::Password => "Step 2 of 5:  This backup is encrypted",
-            Step::SelectTarget => "Step 3 of 5:  Choose the disk to restore onto",
-            Step::Review => "Step 4 of 5:  Check this carefully",
-            Step::Restoring => "Step 5 of 5:  Restoring",
+            Step::FindBackup => "Find a backup",
+            Step::SelectBackup => "Choose the backup to restore",
+            Step::Password => "This backup is encrypted",
+            Step::SelectTarget => "Choose the disk to restore onto",
+            Step::Review => "Check this carefully",
+            Step::Restoring => "Restoring",
             Step::Completed => "Finished",
         }
+    }
+
+    /// Where the operator is, for the band across the top.
+    fn step_label(self) -> &'static str {
+        match self {
+            Step::FindBackup => "Step 1 of 5",
+            Step::SelectBackup | Step::Password => "Step 2 of 5",
+            Step::SelectTarget => "Step 3 of 5",
+            Step::Review => "Step 4 of 5",
+            Step::Restoring => "Step 5 of 5",
+            Step::Completed => "Finished",
+        }
+    }
+
+    /// One line under the heading saying what this step is for.
+    fn subtitle(self) -> &'static str {
+        match self {
+            Step::FindBackup => "Every attached drive is searched. Nothing is changed.",
+            Step::SelectBackup => {
+                "Choose the backup to restore. One marked INCOMPLETE was interrupted and cannot \
+                 be used."
+            }
+            Step::Password => "The password is checked before anything is written.",
+            Step::SelectTarget => {
+                "Everything on the disk you choose will be erased. The drive holding the backup \
+                 is marked and cannot be chosen."
+            }
+            Step::Review => "This erases a disk completely and cannot be undone.",
+            Step::Restoring => "Do not turn the computer off.",
+            Step::Completed => "",
+        }
+    }
+
+    /// Whether this step is the one that destroys a disk.
+    ///
+    /// The review step is styled differently on purpose: a dangerous action
+    /// that looks like every other step is a dangerous action somebody clicks
+    /// through without reading.
+    fn is_destructive(self) -> bool {
+        matches!(self, Step::Review)
     }
 
     /// The buttons this step shows.
@@ -274,8 +328,46 @@ mod focus_tests {
     }
 }
 
+/// Where a label sits, which decides what colour it is drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    /// Text in the band across the top.
+    OnHeader,
+    /// Secondary text in the band across the top.
+    OnHeaderDim,
+    /// The page heading.
+    TitleOnPage,
+    /// Secondary text on the page.
+    DimOnPage,
+    /// Ordinary text on a card.
+    OnCard,
+    /// Ordinary text on the card of the step that erases a disk.
+    OnDangerCard,
+    /// A warning on the card of the step that erases a disk.
+    OnDanger,
+}
+
+impl Tone {
+    fn colours(self, palette: &Palette) -> (COLORREF, COLORREF) {
+        match self {
+            Tone::OnHeader => (palette.nav_text, palette.nav),
+            Tone::OnHeaderDim => (palette.nav_text_dim, palette.nav),
+            Tone::TitleOnPage => (palette.ink, palette.page),
+            Tone::DimOnPage => (palette.muted, palette.page),
+            Tone::OnCard => (palette.body, palette.card),
+            // The words are read, not alarmed at: ordinary text on the wash,
+            // with the red kept for the mark and the heading beside it.
+            Tone::OnDangerCard => (palette.ink, palette.danger_wash),
+            Tone::OnDanger => (palette.danger, palette.danger_wash),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Controls {
+    header_title: HWND,
+    header_step: HWND,
+    subtitle: HWND,
     title: HWND,
     body: HWND,
     list: HWND,
@@ -294,8 +386,11 @@ struct Controls {
 }
 
 impl Controls {
-    fn all(&self) -> [HWND; 12] {
+    fn all(&self) -> [HWND; 15] {
         [
+            self.header_title,
+            self.header_step,
+            self.subtitle,
             self.title,
             self.body,
             self.list,
@@ -312,7 +407,15 @@ impl Controls {
     }
 
     fn for_step(&self, step: Step) -> Vec<HWND> {
-        let mut v = vec![self.title, self.body];
+        let mut v = vec![
+            self.header_title,
+            self.header_step,
+            self.title,
+            self.subtitle,
+        ];
+        if !matches!(step, Step::SelectBackup | Step::SelectTarget) {
+            v.push(self.body);
+        }
         // The buttons come from the step, so a button that is laid out is a
         // button that is shown, and one that is hidden is never in the way.
         for slot in step.buttons() {
@@ -344,9 +447,13 @@ impl Controls {
 }
 
 pub struct RecoveryWindow {
-    font: HFONT,
+    dpi: u32,
     step: Step,
     controls: Controls,
+    /// The tone of every label that is not drawn in the default colours.
+    tones: Vec<(HWND, Tone)>,
+    /// Where the painted surfaces go, worked out with the layout.
+    geometry: Geometry,
     found: Vec<FoundBackup>,
     chosen_backup: Option<usize>,
     targets: Vec<TargetDisk>,
@@ -354,6 +461,18 @@ pub struct RecoveryWindow {
     plan: Option<RestorePlan>,
     worker: Option<Worker<RestoreOutcome>>,
     finished: Option<std::result::Result<RestoreOutcome, Error>>,
+}
+
+/// Where the painted surfaces go.
+#[derive(Default, Clone)]
+struct Geometry {
+    header: RECT,
+    brand_icon: RECT,
+    /// The card the body and any list sit on, and whether it is the dangerous
+    /// one.
+    card: Option<(RECT, bool)>,
+    /// The warning mark on the step that erases a disk.
+    warning_icon: Option<RECT>,
 }
 
 /// A blank line between paragraphs, as the text control wants it.
@@ -447,9 +566,11 @@ impl RecoveryWindow {
     pub fn new(window: &Window) -> Self {
         let dpi = sys::dpi_of(window.raw());
         let mut me = Self {
-            font: sys::ui_font(dpi),
+            dpi,
             step: Step::FindBackup,
             controls: Controls::default(),
+            tones: Vec::new(),
+            geometry: Geometry::default(),
             found: Vec::new(),
             chosen_backup: None,
             targets: Vec::new(),
@@ -462,28 +583,89 @@ impl RecoveryWindow {
         me
     }
 
-    fn create_controls(&mut self, window: &Window) {
-        let f = self.font;
-        let h = window.raw();
-        let c = &mut self.controls;
+    /// Creates one label, in a given type style and colour.
+    fn label(&mut self, h: HWND, id: i32, style: TextStyle, tone: Tone) -> HWND {
+        let hwnd = sys::create_control(h, ControlKind::Label, "", id, theme::font(style, self.dpi));
+        self.tones.push((hwnd, tone));
+        let (foreground, background) = tone.colours(&Palette::current());
+        set_label_colours(hwnd, foreground, background);
+        hwnd
+    }
 
-        c.title = sys::create_control(h, ControlKind::Label, "", ID_TITLE, f);
-        c.body = sys::create_control(h, ControlKind::TextArea, "", ID_BODY, f);
+    fn create_controls(&mut self, window: &Window) {
+        let h = window.raw();
+        let f = theme::font(TextStyle::Body, self.dpi);
+
+        self.controls.header_title =
+            self.label(h, ID_HEADER_TITLE, TextStyle::Brand, Tone::OnHeader);
+        sys::set_text(self.controls.header_title, "MjolnirVSS Recovery");
+        self.controls.header_step =
+            self.label(h, ID_HEADER_STEP, TextStyle::Caption, Tone::OnHeaderDim);
+        self.controls.title = self.label(h, ID_TITLE, TextStyle::Title, Tone::TitleOnPage);
+        self.controls.subtitle = self.label(h, ID_SUBTITLE, TextStyle::Subtitle, Tone::DimOnPage);
+        self.controls.confirm_label =
+            self.label(h, ID_CONFIRM_LABEL, TextStyle::Strong, Tone::TitleOnPage);
+        self.controls.stage = self.label(h, ID_STAGE, TextStyle::Strong, Tone::TitleOnPage);
+
+        self.controls.body = sys::create_control(h, ControlKind::TextArea, "", ID_BODY, f);
+        self.tones.push((self.controls.body, Tone::OnCard));
+        let (foreground, background) = Tone::OnCard.colours(&Palette::current());
+        set_label_colours(self.controls.body, foreground, background);
+
+        let c = &mut self.controls;
         c.list = sys::create_control(h, ControlKind::ListBox, "", ID_LIST, f);
-        c.confirm_label = sys::create_control(h, ControlKind::Label, "", ID_CONFIRM_LABEL, f);
         c.confirm_edit = sys::create_control(h, ControlKind::TextBox, "", ID_CONFIRM_EDIT, f);
         c.password_edit = sys::create_control(h, ControlKind::PasswordBox, "", ID_PASSWORD_EDIT, f);
         c.progress = sys::create_control(h, ControlKind::ProgressBar, "", ID_PROGRESS, f);
-        c.stage = sys::create_control(h, ControlKind::Label, "", ID_STAGE, f);
         c.refresh = sys::create_control(h, ControlKind::Button, "Search again", ID_REFRESH, f);
         c.back = sys::create_control(h, ControlKind::Button, "Back", ID_BACK, f);
-        c.next = sys::create_control(h, ControlKind::DefaultButton, "Next", ID_NEXT, f);
+        // Owner drawn so the one button that carries the action stands out.
+        // Enter still reaches it: the default button is settled through
+        // DM_GETDEFID rather than through the button's style.
+        c.next = sys::create_control(
+            h,
+            ControlKind::AccentButton,
+            "Next",
+            ID_NEXT,
+            theme::font(TextStyle::Strong, self.dpi),
+        );
         c.exit = sys::create_control(h, ControlKind::Button, "Exit", ID_EXIT, f);
+        set_item_style(self.controls.next, ItemStyle::Primary);
     }
 
     fn show_step(&mut self, window: &Window, step: Step) {
         self.step = step;
         sys::set_text(self.controls.title, step.title());
+        sys::set_text(self.controls.header_step, step.step_label());
+        sys::set_text(self.controls.subtitle, step.subtitle());
+        // The confirmation line on the step that erases a disk is a warning,
+        // not a label, and the body beside it sits on the same wash.
+        let (label_tone, body_tone) = if step.is_destructive() {
+            (Tone::OnDanger, Tone::OnDangerCard)
+        } else {
+            (Tone::TitleOnPage, Tone::OnCard)
+        };
+        let palette = Palette::current();
+        for (hwnd, tone) in [
+            (self.controls.confirm_label, label_tone),
+            (self.controls.body, body_tone),
+        ] {
+            if let Some(entry) = self.tones.iter_mut().find(|(h, _)| *h == hwnd) {
+                entry.1 = tone;
+            }
+            let (foreground, background) = tone.colours(&palette);
+            set_label_colours(hwnd, foreground, background);
+        }
+        // The button that erases a disk is red, because it is the button that
+        // erases the disk.
+        set_item_style(
+            self.controls.next,
+            if step.is_destructive() {
+                ItemStyle::Destructive
+            } else {
+                ItemStyle::Primary
+            },
+        );
 
         let visible = self.controls.for_step(step);
         for hwnd in self.controls.all() {
@@ -564,11 +746,6 @@ impl RecoveryWindow {
             sys::list_add(self.controls.list, &f.describe());
         }
         sys::list_select(self.controls.list, None);
-        sys::set_text(
-            self.controls.body,
-            "Choose the backup to restore. A backup marked INCOMPLETE was interrupted \
-             when it was taken and cannot be used.",
-        );
         sys::enable(self.controls.next, false);
     }
 
@@ -632,13 +809,6 @@ impl RecoveryWindow {
         // decision, and a preselected row invites pressing Next without reading.
         sys::list_select(self.controls.list, None);
         sys::enable(self.controls.next, false);
-
-        sys::set_text(
-            self.controls.body,
-            "Choose the disk to restore onto. EVERYTHING ON IT WILL BE ERASED.\r\n\r\n\
-             This is normally the new, blank disk you have just fitted. The drive holding \
-             the backup is marked and cannot be chosen.",
-        );
     }
 
     fn enter_review(&mut self, _window: &Window) {
@@ -838,6 +1008,10 @@ impl RecoveryWindow {
                         "Restore failed"
                     },
                 );
+                sys::set_text(
+                    self.controls.subtitle,
+                    "The disk was not left in a state that will start Windows.",
+                );
                 sys::set_text(self.controls.body, &message_box::format_error(e));
             }
             None => {}
@@ -928,57 +1102,119 @@ impl RecoveryWindow {
         window.invalidate();
     }
 
-    fn layout(&self, window: &Window) {
+    fn layout(&mut self, window: &Window) {
         let dpi = sys::dpi_of(window.raw());
-        let s = |v: i32| sys::scale(v, dpi);
+        self.dpi = dpi;
+        let s = |v: i32| Metrics::at(v, dpi);
         let client: RECT = window.client_rect();
+        let width = client.right - client.left;
 
+        let mut geometry = Geometry {
+            header: sys::rect(0, 0, width, s(HEADER)),
+            ..Default::default()
+        };
+
+        // ---- the band across the top --------------------------------------
+        let icon = s(26);
+        geometry.brand_icon = sys::rect(s(MARGIN), (s(HEADER) - icon) / 2, icon, icon);
+        sys::place(
+            self.controls.header_title,
+            sys::rect(
+                s(MARGIN) + icon + s(12),
+                (s(HEADER) - s(24)) / 2,
+                s(320),
+                s(24),
+            ),
+        );
+        sys::place(
+            self.controls.header_step,
+            sys::rect(
+                width - s(MARGIN) - s(160),
+                (s(HEADER) - s(16)) / 2,
+                s(160),
+                s(16),
+            ),
+        );
+
+        // ---- the content ---------------------------------------------------
         let x = s(MARGIN);
-        let inner = (client.right - client.left) - x * 2;
+        let inner = width - x * 2;
         let bottom = client.bottom - s(MARGIN) - s(BUTTON_HEIGHT);
         let c = &self.controls;
 
-        let mut y = s(MARGIN);
-        sys::place(c.title, sys::rect(x, y, inner, s(LINE) + s(6)));
-        y += s(LINE) + s(16);
+        let mut y = s(HEADER) + s(MARGIN);
+        sys::place(c.title, sys::rect(x, y, inner, s(Metrics::PAGE_TITLE)));
+        y += s(Metrics::PAGE_TITLE) + s(2);
+        sys::place(c.subtitle, sys::rect(x, y, inner, s(SUBTITLE)));
+        y += s(SUBTITLE) + s(Metrics::SECTION_GAP);
+
+        let pad = s(Metrics::CARD_PADDING);
+        let dangerous = self.step.is_destructive();
 
         match self.step {
             Step::SelectBackup | Step::SelectTarget => {
-                let body_height = s(LINE) * 3;
-                sys::place(c.body, sys::rect(x, y, inner, body_height));
-                y += body_height + s(10);
-                let list_height = (bottom - y - s(12)).max(s(80));
-                sys::place(c.list, sys::rect(x, y, inner, list_height));
+                // The list is the whole content of these steps. What it is for
+                // is said once, under the heading.
+                let list_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                geometry.card = Some((sys::rect(x, y, inner, list_height), false));
+                let gap = s(6);
+                sys::place(
+                    c.list,
+                    sys::rect(x + gap, y + gap, inner - gap * 2, list_height - gap * 2),
+                );
             }
-            Step::Password => {
-                let block = s(LINE) + s(30) + s(10);
-                let body_height = (bottom - y - block - s(20)).max(s(80));
-                sys::place(c.body, sys::rect(x, y, inner, body_height));
-                y += body_height + s(10);
-                sys::place(c.confirm_label, sys::rect(x, y, inner, s(LINE)));
-                y += s(LINE) + s(4);
-                sys::place(c.password_edit, sys::rect(x, y, s(300), s(26)));
-            }
-            Step::Review => {
-                let confirm_block = s(LINE) + s(30) + s(10);
-                let body_height = (bottom - y - confirm_block - s(20)).max(s(80));
-                sys::place(c.body, sys::rect(x, y, inner, body_height));
-                y += body_height + s(10);
-                sys::place(c.confirm_label, sys::rect(x, y, inner, s(LINE)));
-                y += s(LINE) + s(4);
-                sys::place(c.confirm_edit, sys::rect(x, y, s(300), s(26)));
+            Step::Password | Step::Review => {
+                let field = if self.step == Step::Password {
+                    c.password_edit
+                } else {
+                    c.confirm_edit
+                };
+                let block = s(20) + s(Metrics::LABEL_GAP) + s(Metrics::INPUT_HEIGHT) + s(20);
+                let card_height = (bottom - y - block - s(Metrics::SECTION_GAP)).max(s(100));
+                geometry.card = Some((sys::rect(x, y, inner, card_height), dangerous));
+
+                let mut text_x = x + pad;
+                let mut text_width = inner - pad * 2;
+                if dangerous {
+                    let mark = s(22);
+                    geometry.warning_icon = Some(sys::rect(x + pad, y + pad + s(2), mark, mark));
+                    text_x += mark + s(12);
+                    text_width -= mark + s(12);
+                }
+                sys::place(
+                    c.body,
+                    sys::rect(text_x, y + pad, text_width, card_height - pad * 2),
+                );
+                y += card_height + s(Metrics::SECTION_GAP);
+
+                sys::place(c.confirm_label, sys::rect(x, y, inner, s(20)));
+                y += s(20) + s(Metrics::LABEL_GAP);
+                sys::place(field, sys::rect(x, y, s(380), s(Metrics::INPUT_HEIGHT)));
             }
             Step::Restoring => {
-                sys::place(c.stage, sys::rect(x, y, inner, s(LINE) + s(4)));
-                y += s(LINE) + s(10);
-                sys::place(c.progress, sys::rect(x, y, inner, s(24)));
-                y += s(24) + s(12);
-                let body_height = (client.bottom - s(MARGIN) - y).max(s(60));
-                sys::place(c.body, sys::rect(x, y, inner, body_height));
+                sys::place(c.stage, sys::rect(x, y, inner, s(20)));
+                y += s(20) + s(12);
+                sys::place(
+                    c.progress,
+                    sys::rect(x, y, inner, s(Metrics::PROGRESS_HEIGHT)),
+                );
+                y += s(Metrics::PROGRESS_HEIGHT) + s(Metrics::SECTION_GAP);
+                // Down to the button row, not to the bottom of the window: the
+                // Exit button lives below this and must not be drawn over.
+                let card_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                geometry.card = Some((sys::rect(x, y, inner, card_height), false));
+                sys::place(
+                    c.body,
+                    sys::rect(x + pad, y + pad, inner - pad * 2, card_height - pad * 2),
+                );
             }
             _ => {
-                let body_height = (bottom - y - s(12)).max(s(80));
-                sys::place(c.body, sys::rect(x, y, inner, body_height));
+                let card_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                geometry.card = Some((sys::rect(x, y, inner, card_height), false));
+                sys::place(
+                    c.body,
+                    sys::rect(x + pad, y + pad, inner - pad * 2, card_height - pad * 2),
+                );
             }
         }
 
@@ -993,6 +1229,37 @@ impl RecoveryWindow {
         ] {
             let (left, width) = row.span(slot);
             sys::place(hwnd, sys::rect(left, bottom, width, s(BUTTON_HEIGHT)));
+        }
+
+        self.geometry = geometry;
+    }
+
+    /// Paints the surfaces the controls sit on.
+    fn paint(&self, canvas: &Canvas) {
+        let palette = canvas.palette();
+        let geometry = &self.geometry;
+
+        canvas.fill(geometry.header, palette.nav);
+        canvas.glyph(geometry.brand_icon, Glyph::Brand, palette.nav_marker);
+
+        if let Some((card, dangerous)) = geometry.card {
+            if dangerous {
+                // The one screen that destroys a disk does not look like the
+                // others. Restrained rather than lurid: a pale wash and a red
+                // edge, so it reads as serious instead of decorative.
+                canvas.rounded(
+                    card,
+                    palette.danger_wash,
+                    Some(palette.danger),
+                    Metrics::RADIUS,
+                );
+            } else {
+                canvas.card(card);
+            }
+        }
+
+        if let Some(mark) = geometry.warning_icon {
+            canvas.glyph(mark, Glyph::Warning, palette.danger);
         }
     }
 
@@ -1028,6 +1295,26 @@ impl WindowHandler for RecoveryWindow {
 
     fn on_layout(&mut self, window: &Window) {
         self.layout(window);
+    }
+
+    fn on_paint(&mut self, _window: &Window, canvas: &Canvas) {
+        self.paint(canvas);
+    }
+
+    fn on_theme_changed(&mut self, _window: &Window) {
+        let palette = Palette::current();
+        for (hwnd, tone) in &self.tones {
+            let (foreground, background) = tone.colours(&palette);
+            set_label_colours(*hwnd, foreground, background);
+        }
+        set_item_style(
+            self.controls.next,
+            if self.step.is_destructive() {
+                ItemStyle::Destructive
+            } else {
+                ItemStyle::Primary
+            },
+        );
     }
 
     fn on_activate(&mut self, window: &Window) {
@@ -1088,10 +1375,55 @@ mod tests {
     #[test]
     fn every_step_has_a_title_that_says_where_the_operator_is() {
         for step in ALL_STEPS {
-            assert!(!step.title().is_empty());
+            assert!(!step.title().is_empty(), "{step:?}");
+            assert!(!step.step_label().is_empty(), "{step:?}");
         }
-        assert!(Step::FindBackup.title().starts_with("Step 1 of 5"));
-        assert!(Step::Restoring.title().starts_with("Step 5 of 5"));
+        assert_eq!(Step::FindBackup.step_label(), "Step 1 of 5");
+        assert_eq!(Step::Restoring.step_label(), "Step 5 of 5");
+        // The two steps that share a position in the wizard say the same thing,
+        // because going from one to the other is not progress.
+        assert_eq!(Step::SelectBackup.step_label(), Step::Password.step_label());
+    }
+
+    /// The step that erases a disk is the only one styled as dangerous. Marking
+    /// every step that way would mean marking none of them.
+    #[test]
+    fn only_the_step_that_erases_a_disk_looks_dangerous() {
+        for step in ALL_STEPS {
+            assert_eq!(step.is_destructive(), step == Step::Review, "{step:?}");
+        }
+    }
+
+    /// Every step a person has to act on says what it is for. The finished step
+    /// is the exception: its body is the report.
+    #[test]
+    fn every_step_being_worked_through_explains_itself() {
+        for step in ALL_STEPS {
+            if step == Step::Completed {
+                continue;
+            }
+            assert!(!step.subtitle().is_empty(), "{step:?}");
+        }
+    }
+
+    /// Text on the header band is drawn in header colours and text on a card in
+    /// card colours. A tone paired with the wrong surface leaves a label that is
+    /// present but invisible.
+    #[test]
+    fn every_tone_puts_readable_text_on_its_own_background() {
+        let palette = Palette::current();
+        for tone in [
+            Tone::OnHeader,
+            Tone::OnHeaderDim,
+            Tone::TitleOnPage,
+            Tone::DimOnPage,
+            Tone::OnCard,
+            Tone::OnDangerCard,
+            Tone::OnDanger,
+        ] {
+            let (text, background) = tone.colours(&palette);
+            assert_ne!(text.0, background.0, "{tone:?} is invisible");
+        }
     }
 
     #[test]
