@@ -10,7 +10,7 @@ below is a real check with a test behind it, and every one explains itself.
 
 | | |
 |---|---|
-| Operating system | **Windows 11 24H2** and **Windows Server 2025** have each been through the whole cycle: live backup, verification, file recovery, bare metal restore, and a machine that booted afterwards. Windows 10 x64 is targeted; see the table below for what has and has not been run |
+| Operating system | **Windows 11 24H2**, **Windows Server 2019** and **Windows Server 2025** have each been through the whole cycle: live backup, verification, file recovery, bare metal restore, and a machine that booted afterwards. Windows 10 x64 is targeted; see the table below for what has and has not been run |
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |
@@ -53,6 +53,18 @@ the machine**, and does not truncate any logs.
 Nothing in MjolnirVSS refuses a server. The checks are about the shape of the
 disk - GPT, one system disk, a sector size it knows, no Storage Spaces - and a
 UEFI Windows Server installation is the same shape as a UEFI Windows 11 one.
+
+**Windows Server 2019 has been through it too**, on the same day. Server 2019
+Standard Evaluation with the Desktop Experience, build 17763: backed up live in
+166 seconds, 4.44 GB stored, verified, damaged copy refused, 11 of 11 file
+hashes matched. Restored onto a blank disk from the wizard, 14.6 GiB across four
+partitions, and **it started on its own**. The restored server matched 12 of 12
+hashes with the EFI partition intact and Windows RE still registered.
+
+Two servers nine years apart, the oldest and the newest supported release,
+behave the same. **Server 2022 sits between them and has not been tested**; it
+is expected to work and that expectation is an inference from the two ends, not
+a result.
 
 **Windows Server 2025 has been through the whole cycle.** On 14 September 2026,
 in a disposable virtual machine: Server 2025 Standard Evaluation with the

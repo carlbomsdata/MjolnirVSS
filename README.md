@@ -1,6 +1,6 @@
 # MjolnirVSS
 
-Portable bare metal backup and recovery for Windows 10 and Windows 11.
+Portable bare metal backup and recovery for Windows 10, Windows 11 and Windows Server.
 
 ---
 
@@ -94,8 +94,10 @@ onto a blank replacement disk after the original has failed.
 
 ## Requirements
 
-- Windows 10 or Windows 11, 64 bit. **Only Windows 11 24H2 has actually been
-  run**; Windows 10 is targeted but untested, and Windows Server is neither
+- Windows 10, Windows 11 or Windows Server, 64 bit. **Windows 11 24H2, Server
+  2019 and Server 2025 have each been backed up, restored and booted.** Windows
+  10 is targeted; see
+  [`docs/supported-configurations.md`](docs/supported-configurations.md)
 - A UEFI machine with a GPT system disk
 - One physical disk holding Windows
 - An external drive formatted NTFS, with room for the backup
