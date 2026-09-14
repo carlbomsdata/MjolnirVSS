@@ -122,8 +122,10 @@ is the honest state of each.
 | 15 | Extracting single files | **Done.** 12 files out of a real backup, every one checked against the hash taken when it was made |
 | 16 | Recovery media boots | **Done.** On UEFI firmware |
 | 17 | Recovery application starts in Windows PE | **Done.** It draws its window and runs a whole restore |
-| 18 | Keyboard only operation | **Done** for the recovery wizard, in Windows PE, with no mouse at any point. The backup window has not been driven this way |
-| 19 | High DPI scaling | Built for and unit tested at 1x, 2x and 3x; not looked at by a person on a high DPI screen |
+| 18 | Keyboard only operation | **Done** for the recovery wizard, in Windows PE, with no mouse at any point, and again after the interface was rebuilt. The backup window's navigation and buttons take focus and show it; it has not been driven through a whole backup this way |
+| 18b | The rebuilt interface, end to end | **Done.** Backup taken from the new window, recovery media built from the same build, the new wizard driven through a whole restore from the keyboard in Windows PE, and the restored Windows started unaided |
+| 19 | High DPI scaling | Every measurement is scaled from one table and unit tested at 1x, 2x and 3x; not looked at by a person on a high DPI screen |
+| 21 | High contrast themes | The palette falls back to system colours and the decoration that depends on the brand colours is dropped; unit tested, and not yet looked at by a person with the theme switched on |
 | 20 | Boot repair when it is needed | **Done.** The boot files were deleted from a restored disk, the machine then failed to start, and the repair is what made it start again |
 
 **Everything that writes was done in disposable virtual machines.** Backup,
