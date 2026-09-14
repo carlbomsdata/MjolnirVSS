@@ -15,7 +15,7 @@
   The BitLocker test later uses a password protector instead of a TPM one, and
   the documentation says so rather than implying a TPM was involved.
 
-  The language is en-GB because the installation media is the English
+  The language is en-US because the installation media is the English
   International edition, which carries that and nothing else. Asking for a
   language the disc does not have makes Setup abandon the answer file and show
   its language page, which is what it did the first time this was tried.
@@ -34,12 +34,12 @@
                language="neutral"
                versionScope="nonSxS">
       <SetupUILanguage>
-        <UILanguage>en-GB</UILanguage>
+        <UILanguage>en-US</UILanguage>
       </SetupUILanguage>
-      <InputLocale>en-GB</InputLocale>
-      <SystemLocale>en-GB</SystemLocale>
-      <UILanguage>en-GB</UILanguage>
-      <UserLocale>en-GB</UserLocale>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
     </component>
 
     <component name="Microsoft-Windows-Setup"
@@ -143,7 +143,7 @@
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/NAME</Key>
-              <Value>Windows Server 2019 Standard Evaluation (Desktop Experience)</Value>
+              <Value>Windows Server 2019 SERVERSTANDARD</Value>
             </MetaData>
           </InstallFrom>
           <InstallTo>
@@ -199,11 +199,11 @@
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-      <InputLocale>en-GB</InputLocale>
-      <SystemLocale>en-GB</SystemLocale>
-      <UILanguage>en-GB</UILanguage>
-      <UILanguageFallback>en-GB</UILanguageFallback>
-      <UserLocale>en-GB</UserLocale>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
     </component>
 
     <component name="Microsoft-Windows-Shell-Setup"

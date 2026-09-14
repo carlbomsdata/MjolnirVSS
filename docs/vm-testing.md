@@ -190,12 +190,22 @@ failing to open something it was told was NTFS.
 Server 2025 installs from the same harness, with two differences worth knowing
 before hunting for a fault that is not there.
 
-**The redesigned Setup asks two questions no answer file suppresses.** Server
-2025 and the other new Setup media ask for a language and a keyboard before
-they look at `autounattend.xml`. Press Return twice at the console; everything
-after that - image, licence, partitioning, account - is unattended as written.
-The first time this happened it looked as though the answer file was being
-ignored entirely. It was not.
+**Setup asks whatever the answer file gets wrong, and looks like it is being
+ignored.** When a setting cannot be applied, Setup quietly falls back to asking
+that one question and carries on honouring the rest. Twice this looked like the
+answer file being ignored wholesale, and both times it was one wrong value:
+
+* the language pages appeared because the answer file asked for `en-GB`, which
+  the Server and Windows 10 evaluation media do not contain. They are `en-us`;
+* the image page appeared on Server 2019 because the name in the answer file did
+  not match. Setup matches the image **name**, and `Get-WindowsImage` reports
+  something else: the 2019 media's images are named `Windows Server 2019
+  SERVERSTANDARD`, while `Get-WindowsImage` calls the same image `Windows Server
+  2019 Standard Evaluation (Desktop Experience)`. Read the name off Setup's own
+  list, not off the cmdlet.
+
+Both are fixed in the answer files. If a page appears that should not, the
+question Setup is asking is the setting that did not apply.
 
 **Server Manager opens itself and takes the keyboard**, seconds after the first
 logon, which swallows whatever is being typed at the time. Close it first.
