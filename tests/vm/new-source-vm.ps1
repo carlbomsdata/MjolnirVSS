@@ -34,7 +34,10 @@ param(
     [string] $AnswerFile,
     [int] $SystemDiskGB = 64,
     [int] $BackupDiskGB = 64,
-    [int] $MemoryMB = 6144,
+    # Enough for Windows to install and run a backup, and small enough that two
+    # of these plus the host do not exhaust a 16 GB machine. The lab runs one
+    # virtual machine at a time for the same reason.
+    [int] $MemoryMB = 4096,
     [int] $Cpus = 4,
     [switch] $Force,
     [switch] $NoWait
@@ -71,6 +74,13 @@ if (-not $WindowsIso -or -not (Test-Path -LiteralPath $WindowsIso)) {
 }
 Write-LabStep "windows iso: $WindowsIso"
 
+# Windows Server 2025 and the other new Setup media need two key presses that
+# the older media did not: the redesigned Setup asks for a language and a
+# keyboard before it looks at the answer file, and no answer file setting
+# suppresses those two pages. Everything after them - the image, the licence,
+# the partitioning, the account - is still unattended. Press Return twice at the
+# console once it has booted.
+#
 # The stock disc waits for a key press before it boots, and Setup does not
 # reliably look on a second disc for an answer file. Both are fixed by
 # rebuilding the disc once, with Microsoft's own no prompt boot image and the
