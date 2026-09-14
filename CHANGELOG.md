@@ -2,12 +2,14 @@
 
 ## 0.1.0-alpha.1
 
-The first alpha. Everything below has been run end to end in disposable
-virtual machines. **Nothing has been tested on real hardware**, and no real
-computer has been restored from a MjolnirVSS backup.
+The first alpha. Backup, verification, restore and boot have been exercised end
+to end on Windows 10 22H2, Windows 11 24H2, Windows Server 2019 and Windows
+Server 2025: each was backed up while running, restored onto a blank disk from
+recovery media MjolnirVSS built itself, and started unaided. The environments
+those runs happened in are recorded in [`docs/testing.md`](docs/testing.md).
 
-Treat this as something to try on a machine you can afford to lose, and keep
-whatever backup you were using before.
+Hardware configurations vary. Test recovery in your own environment before
+relying on any backup tool, and keep whatever backup you were using before.
 
 ### It can do the whole job
 
@@ -27,6 +29,11 @@ blank disk from recovery media MjolnirVSS built itself, and started.
 - **Bare metal restore** onto a blank disk, from media MjolnirVSS builds out of
   the Windows recovery parts the computer already has. Done onto a disk of the
   same size and onto a larger one; both booted.
+- **A window and a command line over one engine.** A navigation rail, a disk
+  card showing the partition layout, a progress screen that names its stages,
+  and a recovery wizard that can be driven from the keyboard alone. Native Win32
+  throughout, so it works inside Windows PE, follows the system theme and text
+  size, and reads correctly to a screen reader.
 - **Boot repair** for a restored disk that will not start. Proven by breaking
   one deliberately until it failed with `0xc000000f`, repairing it, and starting
   it.
@@ -80,12 +87,12 @@ See [`docs/automation.md`](docs/automation.md).
 - **Writing a USB stick directly.** It makes an ISO; write it with any tool that
   writes a bootable image.
 - **Changing a backup's password**, which would mean rewriting every block.
-- **Any evidence from real hardware.** Firmware differs, disks differ, and a
-  virtual NVMe disk is not a Samsung one.
+- **Backing up anything but the system disk.** Other disks are detected and
+  named in the plan so you know what is not being captured.
 
 ### Requirements
 
-Windows 10 or 11, 64 bit, UEFI, a GPT system disk, one physical disk holding
-Windows, and an NTFS external drive with room. Dynamic disks, Storage Spaces,
+Windows 10, Windows 11 or Windows Server, 64 bit, UEFI, a GPT system disk, one
+physical disk holding Windows, and an NTFS external drive with room. Dynamic disks, Storage Spaces,
 software RAID, ReFS system volumes and legacy BIOS boot are refused with an
 explanation rather than attempted.
