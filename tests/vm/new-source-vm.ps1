@@ -27,6 +27,11 @@
 [CmdletBinding()]
 param(
     [string] $WindowsIso,
+    # Which machine this is. The name keeps the virtual machines apart, and the
+    # answer file differs per Windows: Setup is told which image to install by
+    # name, and evaluation media takes no product key.
+    [string] $VmName = 'MjolnirVSS-Test-Source',
+    [string] $AnswerFile,
     [int] $SystemDiskGB = 64,
     [int] $BackupDiskGB = 64,
     [int] $MemoryMB = 6144,
@@ -40,12 +45,11 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'MjolnirLab.psm1') -Force
 
-$VmName = 'MjolnirVSS-Test-Source'
 $lab = Get-LabRoot
 $vmDir = Join-Path (Join-Path $lab 'vms') $VmName
-$work = Join-Path (Join-Path $lab 'work') 'source-payload'
-$payloadIso = Join-Path (Join-Path $lab 'media') 'source-payload.iso'
-$serialLog = Join-Path (Join-Path $lab 'evidence') 'source-console.log'
+$work = Join-Path (Join-Path $lab 'work') "$VmName-payload"
+$payloadIso = Join-Path (Join-Path $lab 'media') "$VmName-payload.iso"
+$serialLog = Join-Path (Join-Path $lab 'evidence') "$VmName-console.log"
 
 Write-LabStep "lab root:  $lab"
 Write-LabStep "vm folder: $vmDir"
@@ -72,7 +76,12 @@ Write-LabStep "windows iso: $WindowsIso"
 # rebuilding the disc once, with Microsoft's own no prompt boot image and the
 # answer file at the root. The result is cached and only rebuilt when the
 # answer file changes.
-$answerFile = Join-Path $PSScriptRoot 'answer-files\source-autounattend.xml'
+$answerFile = if ($AnswerFile) {
+    if (-not (Test-Path -LiteralPath $AnswerFile)) { throw "no answer file at $AnswerFile" }
+    (Resolve-Path -LiteralPath $AnswerFile).Path
+} else {
+    Join-Path $PSScriptRoot 'answer-files\source-autounattend.xml'
+}
 $prepared = & (Join-Path $PSScriptRoot 'new-noprompt-iso.ps1') `
     -SourceIso $WindowsIso -Inject @{ 'autounattend.xml' = $answerFile }
 $WindowsIso = $prepared | Select-Object -Last 1
