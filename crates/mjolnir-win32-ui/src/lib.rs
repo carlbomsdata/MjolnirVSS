@@ -23,10 +23,16 @@
 
 pub mod console;
 pub mod message_box;
+pub mod paint;
 pub mod shell;
 pub mod sys;
+pub mod theme;
 pub mod window;
 pub mod worker;
 
-pub use window::{Window, WindowConfig, WindowHandler};
+pub use paint::{Align, Canvas, Glyph, ItemStyle};
+pub use theme::{Metrics, Palette, TextStyle};
+pub use window::{
+    set_item_style, set_label_colours, DrawItem, Window, WindowConfig, WindowHandler,
+};
 pub use worker::{SharedProgress, Worker};

@@ -28,11 +28,11 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, CreateWindowExW, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
-    SystemParametersInfoW, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, DLGC_STATIC, ES_AUTOHSCROLL, ES_LEFT,
-    ES_MULTILINE, ES_PASSWORD, ES_READONLY, GWLP_WNDPROC, HMENU, NONCLIENTMETRICSW,
-    SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_GETDLGCODE, WM_SETFOCUS, WM_SETFONT, WNDPROC, WS_CHILD, WS_DISABLED, WS_EX_CLIENTEDGE,
-    WS_GROUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    SystemParametersInfoW, BS_DEFPUSHBUTTON, BS_OWNERDRAW, BS_PUSHBUTTON, DLGC_STATIC,
+    ES_AUTOHSCROLL, ES_LEFT, ES_MULTILINE, ES_PASSWORD, ES_READONLY, GWLP_WNDPROC, HMENU,
+    NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDLGCODE, WM_SETFOCUS, WM_SETFONT, WNDPROC, WS_CHILD,
+    WS_DISABLED, WS_EX_CLIENTEDGE, WS_GROUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 
 /// Reference device independent pixels per inch.
@@ -95,6 +95,43 @@ pub fn dpi_of(hwnd: HWND) -> u32 {
     }
 }
 
+/// The shell's message font description at `dpi`.
+///
+/// Every piece of text in the application is derived from this, so the user's
+/// chosen font and text size are respected rather than overridden. The theme
+/// scales the height and changes the weight; it never names a typeface.
+pub fn message_logfont(dpi: u32) -> LOGFONTW {
+    let mut metrics = NONCLIENTMETRICSW {
+        cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the structure is sized correctly and valid for the call. The
+    // per dpi variant is used so the font comes back already scaled.
+    let ok = unsafe {
+        SystemParametersInfoForDpi(
+            SPI_GETNONCLIENTMETRICS.0,
+            std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+            Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
+            0,
+            dpi,
+        )
+    };
+    if ok.is_err() {
+        // Older Windows without the per dpi call: ask for the unscaled
+        // metrics and let the system handle it.
+        // SAFETY: as above.
+        let _ = unsafe {
+            SystemParametersInfoW(
+                SPI_GETNONCLIENTMETRICS,
+                std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+                Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+    }
+    metrics.lfMessageFont
+}
+
 /// Builds the shell's message font at `dpi` and caches it for this thread.
 ///
 /// Using the system font rather than a chosen one is what makes the window look
@@ -106,37 +143,7 @@ pub fn ui_font(dpi: u32) -> HFONT {
         if let Some(font) = *cell {
             return font;
         }
-
-        let mut metrics = NONCLIENTMETRICSW {
-            cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: the structure is sized correctly and valid for the call. The
-        // per dpi variant is used so the font comes back already scaled.
-        let ok = unsafe {
-            SystemParametersInfoForDpi(
-                SPI_GETNONCLIENTMETRICS.0,
-                std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
-                Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
-                0,
-                dpi,
-            )
-        };
-        if ok.is_err() {
-            // Older Windows without the per dpi call: ask for the unscaled
-            // metrics and let the system handle it.
-            // SAFETY: as above.
-            let _ = unsafe {
-                SystemParametersInfoW(
-                    SPI_GETNONCLIENTMETRICS,
-                    std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
-                    Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
-                    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-                )
-            };
-        }
-
-        let logfont: LOGFONTW = metrics.lfMessageFont;
+        let logfont = message_logfont(dpi);
         // SAFETY: the structure describes a valid font request.
         let font = unsafe { CreateFontIndirectW(&logfont) };
         *cell = Some(font);
@@ -204,12 +211,36 @@ pub enum ControlKind {
     ProgressBar,
     /// A list of items the operator picks one of.
     ListBox,
+    /// An item in the navigation rail.
+    ///
+    /// Still a real `BUTTON` window: Windows keeps the keyboard behaviour, the
+    /// tab order, the focus and what a screen reader is told, and asks the
+    /// application only for the pixels. That is what lets the rail be dark
+    /// without giving up any of the things a standard button brings.
+    NavItem,
+    /// The primary action on a screen, drawn in the accent colour.
+    ///
+    /// Owner drawn for the same reason and with the same trade as [`Self::NavItem`].
+    /// Enter still reaches it, because the default button is settled through
+    /// `DM_GETDEFID` rather than through the button's style.
+    AccentButton,
 }
 
 impl ControlKind {
+    /// Whether this control's pixels come from the application.
+    ///
+    /// The window plumbing routes `WM_DRAWITEM` for these, and the handler is
+    /// asked to paint them.
+    pub fn is_owner_drawn(self) -> bool {
+        matches!(self, ControlKind::NavItem | ControlKind::AccentButton)
+    }
+
     fn class(self) -> PCWSTR {
         match self {
-            ControlKind::Button | ControlKind::DefaultButton => w!("BUTTON"),
+            ControlKind::Button
+            | ControlKind::DefaultButton
+            | ControlKind::NavItem
+            | ControlKind::AccentButton => w!("BUTTON"),
             ControlKind::Label => w!("STATIC"),
             ControlKind::TextBox | ControlKind::PasswordBox | ControlKind::TextArea => {
                 w!("EDIT")
@@ -244,6 +275,13 @@ impl ControlKind {
                 base | WS_VSCROLL | WINDOW_STYLE((ES_LEFT | ES_MULTILINE | ES_READONLY) as u32)
             }
             ControlKind::ProgressBar => base,
+            // BS_OWNERDRAW replaces the button's appearance and nothing else.
+            // It is still a BUTTON: Space and Enter press it, it takes a tab
+            // stop, and UI Automation reports it as a button with the text it
+            // was given. Only the drawing moves into the application.
+            ControlKind::NavItem | ControlKind::AccentButton => {
+                base | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32)
+            }
             // LBS_NOTIFY is what makes a selection arrive as WM_COMMAND, and
             // the scroll bar matters because a recovery machine can have more
             // backups on a drive than fit on one screen.
@@ -257,10 +295,12 @@ impl ControlKind {
 
     fn ex_style(self) -> WINDOW_EX_STYLE {
         match self {
-            ControlKind::TextBox
-            | ControlKind::PasswordBox
-            | ControlKind::TextArea
-            | ControlKind::ListBox => WS_EX_CLIENTEDGE,
+            // The sunken border belongs on things a person types into. A read
+            // only text area is output, and it sits on a painted card, where a
+            // border would make it look like a disabled text box.
+            ControlKind::TextBox | ControlKind::PasswordBox | ControlKind::ListBox => {
+                WS_EX_CLIENTEDGE
+            }
             _ => WINDOW_EX_STYLE(0),
         }
     }
@@ -622,6 +662,8 @@ mod tests {
             ControlKind::TextArea,
             ControlKind::ProgressBar,
             ControlKind::ListBox,
+            ControlKind::NavItem,
+            ControlKind::AccentButton,
         ] {
             assert!(!kind.class().is_null());
             // Every control is a visible child; that is the minimum.
@@ -641,6 +683,8 @@ mod tests {
             ControlKind::TextBox,
             ControlKind::PasswordBox,
             ControlKind::ListBox,
+            ControlKind::NavItem,
+            ControlKind::AccentButton,
         ] {
             assert_ne!(
                 kind.style().0 & WS_TABSTOP.0,
@@ -658,6 +702,41 @@ mod tests {
             ControlKind::TextArea,
         ] {
             assert_eq!(kind.style().0 & WS_TABSTOP.0, 0, "{kind:?} steals focus");
+        }
+    }
+
+    /// An owner drawn control is still a real button. If the class ever stopped
+    /// being `BUTTON`, the keyboard behaviour and everything a screen reader is
+    /// told would go with it, and only the appearance would survive.
+    #[test]
+    fn owner_drawn_controls_are_still_buttons() {
+        for kind in [ControlKind::NavItem, ControlKind::AccentButton] {
+            assert!(kind.is_owner_drawn(), "{kind:?}");
+            assert_ne!(
+                kind.style().0 & WINDOW_STYLE(BS_OWNERDRAW as u32).0,
+                0,
+                "{kind:?} does not ask to be drawn by the application"
+            );
+        }
+        // Nothing else may be: a text box or a list drawn by hand would lose
+        // its caret, its selection and its accessibility.
+        // Nothing a person types into may be: a text box or a list drawn by
+        // hand would lose its caret, its selection colours and its focus ring,
+        // and none of those is worth a nicer border.
+        for kind in [
+            ControlKind::Button,
+            ControlKind::DefaultButton,
+            ControlKind::Label,
+            ControlKind::TextBox,
+            ControlKind::PasswordBox,
+            ControlKind::TextArea,
+            ControlKind::ProgressBar,
+            ControlKind::ListBox,
+        ] {
+            assert!(
+                !kind.is_owner_drawn(),
+                "{kind:?} should be drawn by Windows"
+            );
         }
     }
 }

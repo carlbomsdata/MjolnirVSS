@@ -25,8 +25,13 @@ use std::cell::RefCell;
 use mjolnir_core::error::{Error, Result};
 use mjolnir_core::exit::ExitCode;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
+    DeleteObject, EndPaint, InvalidateRect, SelectObject, SetBkColor, SetTextColor, UpdateWindow,
+    HBRUSH, PAINTSTRUCT, SRCCOPY,
+};
+use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_DISABLED, ODS_FOCUS, ODS_SELECTED};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
@@ -34,11 +39,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
     TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SWP_NOACTIVATE,
     SWP_NOZORDER, SW_SHOW, WM_ACTIVATE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_DPICHANGED, WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CAPTION,
+    WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WM_SETFOCUS, WM_SIZE,
+    WM_SYSCOLORCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN,
     WS_EX_CONTROLPARENT, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
 
+use crate::paint::{draw_item, Canvas, ItemStyle};
 use crate::sys;
+use crate::theme::Palette;
 
 /// A window this process owns.
 ///
@@ -244,6 +252,112 @@ pub trait WindowHandler: 'static {
         let _ = window;
         true
     }
+
+    /// The user turned a high contrast theme on or off, or changed a system
+    /// colour.
+    ///
+    /// Colours registered with [`set_label_colours`] and [`set_item_style`] were
+    /// resolved when they were registered, so every one of them has to be
+    /// registered again against the palette that is in force now. A window that
+    /// skipped this would keep painting navy in a theme the user chose
+    /// specifically to get rid of it.
+    fn on_theme_changed(&mut self, window: &Window) {
+        let _ = window;
+    }
+
+    /// Paints the surfaces the controls sit on.
+    ///
+    /// Called with the whole client area already cleared to the page colour.
+    /// Nothing a person operates should be drawn here: this is for backgrounds,
+    /// cards, dividers, headings and icons, and everything else is a real
+    /// control that Windows draws.
+    fn on_paint(&mut self, window: &Window, canvas: &Canvas) {
+        let _ = (window, canvas);
+    }
+}
+
+thread_local! {
+    /// What colour each label is drawn in, by control.
+    ///
+    /// Kept here rather than in the handler because the message asking for it
+    /// arrives *inside* whatever handler changed the label: setting a static's
+    /// text repaints it synchronously, which sends `WM_CTLCOLORSTATIC` back
+    /// before the handler has returned. Asking the handler then finds it already
+    /// borrowed, and the label would quietly fall back to dialog grey on top of
+    /// a white card. This table needs no borrow at all.
+    static LABEL_COLOURS: RefCell<Vec<(HWND, COLORREF, COLORREF)>> =
+        const { RefCell::new(Vec::new()) };
+
+    /// How each owner drawn control should look, by control.
+    ///
+    /// Registered for the same reason: `EnableWindow` repaints a button
+    /// synchronously, so `WM_DRAWITEM` arrives while the handler that enabled it
+    /// is still running.
+    static ITEM_STYLES: RefCell<Vec<(HWND, ItemStyle)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Says what colours a label is drawn in.
+///
+/// A static control paints its own background, so one sitting on a painted card
+/// or a dark rail has to be told what it is sitting on. Call it once when the
+/// control is created, and again if the meaning of the text changes.
+pub fn set_label_colours(control: HWND, text: COLORREF, background: COLORREF) {
+    if control.is_invalid() {
+        return;
+    }
+    LABEL_COLOURS.with(|cell| {
+        let mut table = cell.borrow_mut();
+        match table.iter_mut().find(|(hwnd, _, _)| *hwnd == control) {
+            Some(entry) => {
+                entry.1 = text;
+                entry.2 = background;
+            }
+            None => table.push((control, text, background)),
+        }
+    });
+}
+
+/// Says how an owner drawn control should look.
+///
+/// Call it once when the control is created, and again when what it represents
+/// changes: a navigation item becoming the selected one, for example.
+pub fn set_item_style(control: HWND, style: ItemStyle) {
+    if control.is_invalid() {
+        return;
+    }
+    ITEM_STYLES.with(|cell| {
+        let mut table = cell.borrow_mut();
+        match table.iter_mut().find(|(hwnd, _)| *hwnd == control) {
+            Some(entry) => entry.1 = style,
+            None => table.push((control, style)),
+        }
+    });
+}
+
+/// Forgets every registered colour and style. Called as the window is destroyed.
+fn release_registrations() {
+    LABEL_COLOURS.with(|cell| cell.borrow_mut().clear());
+    ITEM_STYLES.with(|cell| cell.borrow_mut().clear());
+}
+
+/// One owner drawn control, as Windows describes it.
+#[derive(Debug, Clone)]
+pub struct DrawItem {
+    /// The control's identifier, as given when it was created.
+    pub id: i32,
+    /// Where to draw, in the control's own coordinates.
+    pub rect: RECT,
+    /// The control's text, which the application still has to draw.
+    pub text: String,
+    /// Whether the control is being pressed.
+    pub pressed: bool,
+    /// Whether the control has keyboard focus.
+    ///
+    /// Something visible has to say so, or the window cannot be used from the
+    /// keyboard: the focus is somewhere, and nothing on screen says where.
+    pub focused: bool,
+    /// Whether the control is disabled.
+    pub disabled: bool,
 }
 
 /// Sent to the window once, after it is on screen, so the handler can put the
@@ -381,10 +495,16 @@ where
 
     // WS_EX_CONTROLPARENT is what makes Tab move between the child controls,
     // which is what makes the window usable without a mouse.
+    //
+    // WS_CLIPCHILDREN keeps the painted surfaces out from under the controls.
+    // Without it the background is drawn across the whole client area and every
+    // control then redraws itself on top, which flickers visibly on the
+    // progress screen.
+    let base = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
     let style = if config.minimise_box {
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+        base | WS_MINIMIZEBOX
     } else {
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU
+        base
     };
 
     // SAFETY: the class was registered above and both strings are locals that
@@ -440,7 +560,98 @@ where
     pump_messages(hwnd);
 
     sys::release_ui_font();
+    crate::theme::release_fonts();
+    release_brushes();
     Ok(())
+}
+
+thread_local! {
+    /// Brushes handed back from `WM_CTLCOLORSTATIC`, one per colour.
+    ///
+    /// Windows keeps using the brush after the message returns, so it cannot be
+    /// deleted there. There are a handful of surface colours in the whole
+    /// application, so caching them and deleting the lot on the way out is both
+    /// simpler and more honest than trying to guess when one is finished with.
+    static BRUSHES: RefCell<Vec<(u32, HBRUSH)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A cached solid brush for a colour.
+fn brush_for(colour: COLORREF) -> HBRUSH {
+    BRUSHES.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((_, brush)) = cache.iter().find(|(c, _)| *c == colour.0).copied() {
+            return brush;
+        }
+        // SAFETY: creates a brush this thread owns. It is kept in the cache and
+        // deleted by `release_brushes` once every window has gone.
+        let brush = unsafe { CreateSolidBrush(colour) };
+        cache.push((colour.0, brush));
+        brush
+    })
+}
+
+/// Deletes every cached brush. Called once, as the application exits.
+fn release_brushes() {
+    BRUSHES.with(|cell| {
+        for (_, brush) in cell.borrow_mut().drain(..) {
+            if brush.is_invalid() {
+                continue;
+            }
+            // SAFETY: each brush was created above and is owned here. Every
+            // window that could have one selected has already been destroyed.
+            unsafe {
+                let _ = DeleteObject(brush.into());
+            }
+        }
+    });
+}
+
+/// Paints the window's surfaces, through an off screen bitmap.
+///
+/// Drawing straight onto the screen makes a progress screen that repaints five
+/// times a second flicker badly. Everything is drawn into a matching bitmap
+/// first and copied across in one go, which is a single visible change instead
+/// of a dozen.
+fn paint(hwnd: HWND, window: &Window) {
+    let client = window.client_rect();
+    let width = client.right - client.left;
+    let height = client.bottom - client.top;
+
+    let mut ps = PAINTSTRUCT::default();
+    // SAFETY: `ps` is a live local of the expected type, and BeginPaint is
+    // balanced by the EndPaint at the end of this function on every path.
+    let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+
+    if width > 0 && height > 0 && !hdc.is_invalid() {
+        // SAFETY: every object created here is released below, and each is put
+        // back before the one holding it is deleted. `hdc` is valid between
+        // BeginPaint and EndPaint.
+        unsafe {
+            let memory = CreateCompatibleDC(Some(hdc));
+            let bitmap = CreateCompatibleBitmap(hdc, width, height);
+            if !memory.is_invalid() && !bitmap.is_invalid() {
+                let previous = SelectObject(memory, bitmap.into());
+
+                let palette = Palette::current();
+                let canvas = Canvas::new(memory, sys::dpi_of(hwnd), palette);
+                canvas.fill(sys::rect(0, 0, width, height), palette.page);
+                with_handler(|h| h.on_paint(window, &canvas));
+
+                let _ = BitBlt(hdc, 0, 0, width, height, Some(memory), 0, 0, SRCCOPY);
+
+                SelectObject(memory, previous);
+                let _ = DeleteObject(bitmap.into());
+            }
+            if !memory.is_invalid() {
+                let _ = DeleteDC(memory);
+            }
+        }
+    }
+
+    // SAFETY: balances the BeginPaint above with the same structure.
+    unsafe {
+        let _ = EndPaint(hwnd, &ps);
+    }
 }
 
 type HandlerFactory = Box<dyn FnOnce(&Window) -> Box<dyn WindowHandler>>;
@@ -544,12 +755,83 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             LRESULT(0)
         }
         WM_CTLCOLORSTATIC => {
-            // Labels draw their own opaque background by default, which looks
-            // wrong on a dialog coloured window and unreadable in a high
-            // contrast theme.
+            // A label draws its own opaque background, and by default that is
+            // the dialog grey, which is wrong on top of a painted card and
+            // unreadable in a high contrast theme. The handler is asked what
+            // this particular label sits on; if it has no opinion, the system
+            // colours are used, which is what a high contrast theme needs.
             let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut core::ffi::c_void);
-            let brush = sys::paint_label_background(hdc);
-            LRESULT(brush.0 as isize)
+            let control = HWND(lparam.0 as *mut core::ffi::c_void);
+
+            let chosen = LABEL_COLOURS.with(|cell| {
+                cell.borrow()
+                    .iter()
+                    .find(|(hwnd, _, _)| *hwnd == control)
+                    .map(|(_, text, background)| (*text, *background))
+            });
+
+            match chosen {
+                Some((text, background)) => {
+                    // SAFETY: the device context comes from this message and is
+                    // valid while it is being handled. Both colours are plain
+                    // values, and the brush is owned by the cache below, which
+                    // keeps it alive until the application exits.
+                    unsafe {
+                        SetTextColor(hdc, text);
+                        SetBkColor(hdc, background);
+                    }
+                    LRESULT(brush_for(background).0 as isize)
+                }
+                None => {
+                    let brush = sys::paint_label_background(hdc);
+                    LRESULT(brush.0 as isize)
+                }
+            }
+        }
+        // Nothing is erased: WM_PAINT paints every pixel of the client area
+        // from the double buffer below, so erasing first would only produce a
+        // flash of the wrong colour.
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            paint(hwnd, &window);
+            LRESULT(0)
+        }
+        WM_DRAWITEM => {
+            // SAFETY: for WM_DRAWITEM, Windows documents LPARAM as a pointer to
+            // a DRAWITEMSTRUCT that is valid for the duration of the message.
+            // The null check covers a malformed message.
+            if lparam.0 == 0 {
+                return LRESULT(0);
+            }
+            let draw = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
+            let item = DrawItem {
+                id: draw.CtlID as i32,
+                rect: draw.rcItem,
+                text: window.text_of(draw.hwndItem),
+                pressed: (draw.itemState.0 & ODS_SELECTED.0) != 0,
+                focused: (draw.itemState.0 & ODS_FOCUS.0) != 0,
+                disabled: (draw.itemState.0 & ODS_DISABLED.0) != 0,
+            };
+            let style = ITEM_STYLES.with(|cell| {
+                cell.borrow()
+                    .iter()
+                    .find(|(control, _)| *control == draw.hwndItem)
+                    .map(|(_, style)| *style)
+            });
+            if let Some(style) = style {
+                let canvas = Canvas::new(draw.hDC, sys::dpi_of(hwnd), Palette::current());
+                draw_item(&canvas, &item, style);
+            }
+            LRESULT(1)
+        }
+        // The user turned a high contrast theme on or off, or changed a system
+        // colour. Both arrive from the message loop rather than from inside a
+        // handler, so asking the handler to register its colours again is safe
+        // here in a way it would not be during a repaint.
+        WM_THEMECHANGED | WM_SYSCOLORCHANGE => {
+            with_handler(|h| h.on_theme_changed(&window));
+            window.invalidate();
+            LRESULT(0)
         }
         WM_DPICHANGED => {
             // Windows supplies the rectangle the window should move to so it
@@ -576,6 +858,7 @@ extern "system" fn trampoline(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             // Dropping the handler drops anything it owns, including a worker
             // thread, whose destructor cancels the job and waits for it. That
             // is what stops a shadow copy outliving the window.
+            release_registrations();
             HANDLER.with(|cell| {
                 if let Ok(mut borrowed) = cell.try_borrow_mut() {
                     *borrowed = None;
