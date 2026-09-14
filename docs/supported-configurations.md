@@ -10,7 +10,7 @@ below is a real check with a test behind it, and every one explains itself.
 
 | | |
 |---|---|
-| Operating system | Windows 10 x64 and Windows 11 x64 are what the code targets. **Only Windows 11 24H2 (build 26100) has been run.** Windows 10 has never been tested, and no Windows Server release has been tested or looked at |
+| Operating system | **Windows 11 24H2** and **Windows Server 2025** have each been through the whole cycle: live backup, verification, file recovery, bare metal restore, and a machine that booted afterwards. Windows 10 x64 is targeted; see the table below for what has and has not been run |
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |
@@ -53,6 +53,18 @@ the machine**, and does not truncate any logs.
 Nothing in MjolnirVSS refuses a server. The checks are about the shape of the
 disk - GPT, one system disk, a sector size it knows, no Storage Spaces - and a
 UEFI Windows Server installation is the same shape as a UEFI Windows 11 one.
+
+**Windows Server 2025 has been through the whole cycle.** On 14 September 2026,
+in a disposable virtual machine: Server 2025 Standard Evaluation with the
+Desktop Experience, installed on a 64 GB UEFI disk with the same four partitions
+a Windows 11 machine has. A live backup read 2,900,789 of 16,460,799 clusters -
+used block imaging skipping 82% of the partition - and stored 6.10 GB in 478
+seconds. It verified; a copy with one block removed was refused. Eleven of
+eleven file hashes matched out of the backup. The backup was restored onto a
+blank disk from the recovery wizard, 11.7 GiB across four partitions, and **the
+restored server started on its own** with no repair. The restored machine
+matched 12 of 12 hashes, kept every partition's type, identifier, offset and
+size, and still had Windows RE registered.
 
 What is different about a server, and worth knowing before trusting it:
 
