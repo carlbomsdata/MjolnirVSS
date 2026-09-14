@@ -94,9 +94,9 @@ onto a blank replacement disk after the original has failed.
 
 ## Requirements
 
-- Windows 10, Windows 11 or Windows Server, 64 bit. **Windows 11 24H2, Server
-  2019 and Server 2025 have each been backed up, restored and booted.** Windows
-  10 is targeted; see
+- Windows 10, Windows 11 or Windows Server, 64 bit. **Windows 10 22H2, Windows
+  11 24H2, Server 2019 and Server 2025 have each been backed up, restored and
+  booted**, all in virtual machines. See
   [`docs/supported-configurations.md`](docs/supported-configurations.md)
 - A UEFI machine with a GPT system disk
 - One physical disk holding Windows

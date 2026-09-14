@@ -10,7 +10,7 @@ below is a real check with a test behind it, and every one explains itself.
 
 | | |
 |---|---|
-| Operating system | **Windows 11 24H2**, **Windows Server 2019** and **Windows Server 2025** have each been through the whole cycle: live backup, verification, file recovery, bare metal restore, and a machine that booted afterwards. Windows 10 x64 is targeted; see the table below for what has and has not been run |
+| Operating system | **Windows 10 22H2**, **Windows 11 24H2**, **Windows Server 2019** and **Windows Server 2025** have each been through the whole cycle: live backup, verification, file recovery, bare metal restore, and a machine that booted afterwards. All four were virtual machines |
 | Firmware | UEFI |
 | Partition table | GPT |
 | System disk | One physical disk holding the whole Windows installation |
