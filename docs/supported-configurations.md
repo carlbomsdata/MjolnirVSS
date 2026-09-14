@@ -19,9 +19,73 @@ below is a real check with a test behind it, and every one explains itself.
 | Recovery partition | NTFS |
 | Sector sizes | 512 native and 512e (512 logical / 4096 physical); 4Kn is implemented and unit tested but has not been exercised on real hardware |
 | Destination | A local NTFS volume on a different physical disk, usually an external drive |
-| Backup kind | Full |
+| Backup kind | An image of the whole system disk. Declared to Windows as a **copy** backup, which is what stops it disturbing anybody else's backups: see below |
 | What is captured from an NTFS volume | The clusters the filesystem says are in use, read from the shadow copy, plus the boot sectors and both copies of the master file table. Volumes that will not report their allocation are captured whole, and the manifest records that they were |
 | Restore target | A blank disk at least as large as the layout requires, with the same logical sector size |
+
+---
+
+## What a backup does to other backup software
+
+MjolnirVSS declares a **copy** backup (`VSS_BT_COPY`), not a full one.
+
+That distinction does nothing at all on a machine with no application writers,
+and matters a great deal on a server. `vss.h` defines a full backup as one where
+"each file's backup history will be updated to reflect that it was backed up",
+and writers act on that: SQL Server and Exchange treat a completed full backup
+as theirs to account for and **truncate their transaction logs**. A copy backup
+is defined as copying files "regardless of the state of each file's backup
+history", which "will not be updated".
+
+MjolnirVSS images a disk. It cannot restore a single database, it keeps no
+backup history, and it is in no position to take responsibility for anybody's
+log chain. Declaring a full backup would tell every writer on the machine
+something untrue, and the cost on a real server is somebody else's backup chain
+quietly broken by a tool that was only supposed to be reading.
+
+So: **taking a MjolnirVSS backup does not disturb the backup software already on
+the machine**, and does not truncate any logs.
+
+---
+
+## Windows Server
+
+Nothing in MjolnirVSS refuses a server. The checks are about the shape of the
+disk - GPT, one system disk, a sector size it knows, no Storage Spaces - and a
+UEFI Windows Server installation is the same shape as a UEFI Windows 11 one.
+
+What is different about a server, and worth knowing before trusting it:
+
+| | |
+|---|---|
+| **Data on other disks is not captured** | MjolnirVSS backs up the system disk. A server with its data on a second disk gets that data backed up by **nothing here**. This is the single biggest thing to get wrong on a server |
+| **Storage Spaces and dynamic disks** | Common on servers, and refused with an explanation. See the table above |
+| **Server Core** | Has no desktop to open a window on. Every command works from the prompt, and if the window cannot be opened the reason is printed to the console rather than shown in a message box nobody can see |
+| **No recovery partition** | Many server installations have no Windows RE partition. Recovery media is then built from the Windows ADK instead, which `recovery-sources` reports |
+| **Application writers** | Their files are captured as they sit on the frozen volume, consistent to that instant. They are not backed up as components and cannot be restored individually |
+
+---
+
+## Windows 7 and 8.1
+
+**Not supported, and not a small job to support.** Three separate reasons, any
+one of which is on its own enough:
+
+1. **The program will not load.** It imports `SetProcessDpiAwarenessContext`,
+   `GetDpiForWindow` and `SystemParametersInfoForDpi` from `user32.dll`, none of
+   which exist before Windows 10, and links `combase.dll`, which is Windows 8
+   and later. A static import that cannot be resolved stops the process before
+   `main` runs.
+2. **The toolchain does not target it.** Rust's `x86_64-pc-windows-msvc` target
+   requires Windows 10. Building for Windows 7 means the tier 3
+   `x86_64-win7-windows-msvc` target, which is a different support level.
+3. **The disks are the wrong shape.** Windows 7 machines are overwhelmingly BIOS
+   and master boot record, which MjolnirVSS refuses by design. A GPT and UEFI
+   Windows 7 installation exists but is rare.
+
+Supporting it would mean a second build target, replacing those imports with
+runtime lookups, and implementing MBR capture and restore. It is not a
+configuration flag.
 
 ---
 
