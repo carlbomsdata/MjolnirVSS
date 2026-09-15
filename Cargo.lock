@@ -437,7 +437,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mjolnir-backup"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "mjolnir-backup",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "proptest",
  "serde",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-crypto"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-files"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-image"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "mjolnir-core",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-integration-tests"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-backup",
  "mjolnir-core",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-media"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "tempfile",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-ntfs"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "proptest",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-restore"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
@@ -565,7 +565,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-storage"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-testkit"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-image",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-vss"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "mjolnir-storage",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnir-win32-ui"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-core",
  "windows",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnirvss"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "mjolnir-backup",
  "mjolnir-cli",
@@ -623,7 +623,7 @@ dependencies = [
 
 [[package]]
 name = "mjolnirvss-restore"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "mjolnir-core",

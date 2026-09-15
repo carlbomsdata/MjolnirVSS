@@ -1,5 +1,50 @@
 # Changes
 
+## 0.1.0-alpha.2
+
+One theme: the interface was inconsistent with itself, and now it is not.
+
+### One set of measurements
+
+Every size in both windows used to be picked by hand where it was needed. There
+were **nine different command button widths**, two different button heights, two
+unrelated text box widths, and gaps of 2, 6, 8, 10, 12, 14, 16 and 22 units with
+no relationship between them.
+
+There is now one table of metrics and the windows contain no numbers at all:
+
+- **Two button widths**, which is what Windows' own guidance asks for: one for a
+  command and a wider one for the action a screen exists to perform.
+- **One button height, one input height**, and the button beside a text box is
+  centred on it rather than hung from the same top edge.
+- **One spacing scale** of five steps, every one a multiple of four, which is
+  what keeps a layout crisp at 125%, 150% and 175% display scaling.
+- **One set of line boxes** for captions, body text, headings, titles and
+  figures, so two pieces of text on one row share a baseline.
+
+The metrics are checked when the code is compiled rather than when a test runs,
+so a size that leaves the grid fails the build. Three did.
+
+### Text that lines up
+
+A Windows static control draws its text against the *top* of its box, so a
+heading in a 24 unit box and a figure in a 40 unit box starting at the same
+point visibly did not line up. Single line labels now centre their text in their
+box and are cut with an ellipsis rather than drawn over their neighbour; blocks
+of wrapped text are a separate kind that still flows from the top. Values at the
+right of a card are right aligned, so they end on the card's padding.
+
+### Fixed
+
+- The Exit button on the recovery wizard's restoring step was drawn **on top of**
+  the panel above it, with half the button hidden. Found by watching a real
+  restore in Windows PE.
+- A failed restore put its three paragraphs on screen as one run-on sentence. A
+  message box accepts a bare newline; a plain edit control does not, and the
+  same text goes to both.
+- The wizard's explanation on the two list steps was a two line scrolling box
+  repeating the line above it. The list now fills the step.
+
 ## 0.1.0-alpha.1
 
 The first alpha. Backup, verification, restore and boot have been exercised end
