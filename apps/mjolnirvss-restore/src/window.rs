@@ -551,14 +551,17 @@ impl ButtonRow {
 }
 
 fn button_row(x: i32, inner: i32, s: &dyn Fn(i32) -> i32) -> ButtonRow {
-    let gap = s(10);
-    let next_width = s(180);
-    let back_width = s(90);
+    // Two widths across the whole application: one for a command, and a wider
+    // one for the action the step exists to perform. Nine different widths is
+    // what this row used to have, and it read as nine accidents.
+    let gap = s(Metrics::BUTTON_GAP);
+    let width = s(Metrics::BUTTON_WIDTH);
+    let action = s(Metrics::BUTTON_WIDTH_WIDE);
     ButtonRow {
-        exit: (x, s(90)),
-        refresh: (x + s(100), s(130)),
-        back: (x + inner - next_width - gap - back_width, back_width),
-        next: (x + inner - next_width, next_width),
+        exit: (x, width),
+        refresh: (x + width + gap, width),
+        back: (x + inner - action - gap - width, width),
+        next: (x + inner - action, action),
     }
 }
 
@@ -584,8 +587,26 @@ impl RecoveryWindow {
     }
 
     /// Creates one label, in a given type style and colour.
+    /// Creates one label holding a single line.
     fn label(&mut self, h: HWND, id: i32, style: TextStyle, tone: Tone) -> HWND {
-        let hwnd = sys::create_control(h, ControlKind::Label, "", id, theme::font(style, self.dpi));
+        self.label_of(h, ControlKind::Label, id, style, tone)
+    }
+
+    /// Creates one block of text, wrapped over as many lines as it needs.
+    fn paragraph(&mut self, h: HWND, id: i32, style: TextStyle, tone: Tone) -> HWND {
+        self.label_of(h, ControlKind::Paragraph, id, style, tone)
+    }
+
+    /// Creates a label of a given kind, registering its colours as it goes.
+    fn label_of(
+        &mut self,
+        h: HWND,
+        kind: ControlKind,
+        id: i32,
+        style: TextStyle,
+        tone: Tone,
+    ) -> HWND {
+        let hwnd = sys::create_control(h, kind, "", id, theme::font(style, self.dpi));
         self.tones.push((hwnd, tone));
         let (foreground, background) = tone.colours(&Palette::current());
         set_label_colours(hwnd, foreground, background);
@@ -602,7 +623,8 @@ impl RecoveryWindow {
         self.controls.header_step =
             self.label(h, ID_HEADER_STEP, TextStyle::Caption, Tone::OnHeaderDim);
         self.controls.title = self.label(h, ID_TITLE, TextStyle::Title, Tone::TitleOnPage);
-        self.controls.subtitle = self.label(h, ID_SUBTITLE, TextStyle::Subtitle, Tone::DimOnPage);
+        self.controls.subtitle =
+            self.paragraph(h, ID_SUBTITLE, TextStyle::Subtitle, Tone::DimOnPage);
         self.controls.confirm_label =
             self.label(h, ID_CONFIRM_LABEL, TextStyle::Strong, Tone::TitleOnPage);
         self.controls.stage = self.label(h, ID_STAGE, TextStyle::Strong, Tone::TitleOnPage);
@@ -1115,24 +1137,24 @@ impl RecoveryWindow {
         };
 
         // ---- the band across the top --------------------------------------
-        let icon = s(26);
+        let icon = s(Metrics::LINE_HEADING);
         geometry.brand_icon = sys::rect(s(MARGIN), (s(HEADER) - icon) / 2, icon, icon);
         sys::place(
             self.controls.header_title,
             sys::rect(
-                s(MARGIN) + icon + s(12),
-                (s(HEADER) - s(24)) / 2,
-                s(320),
-                s(24),
+                s(MARGIN) + icon + s(Metrics::SPACE_M),
+                (s(HEADER) - s(Metrics::LINE_HEADING)) / 2,
+                s(Metrics::BUTTON_WIDTH_WIDE * 2),
+                s(Metrics::LINE_HEADING),
             ),
         );
         sys::place(
             self.controls.header_step,
             sys::rect(
-                width - s(MARGIN) - s(160),
-                (s(HEADER) - s(16)) / 2,
-                s(160),
-                s(16),
+                width - s(MARGIN) - s(Metrics::BUTTON_WIDTH),
+                (s(HEADER) - s(Metrics::LINE_CAPTION)) / 2,
+                s(Metrics::BUTTON_WIDTH),
+                s(Metrics::LINE_CAPTION),
             ),
         );
 
@@ -1143,8 +1165,8 @@ impl RecoveryWindow {
         let c = &self.controls;
 
         let mut y = s(HEADER) + s(MARGIN);
-        sys::place(c.title, sys::rect(x, y, inner, s(Metrics::PAGE_TITLE)));
-        y += s(Metrics::PAGE_TITLE) + s(2);
+        sys::place(c.title, sys::rect(x, y, inner, s(Metrics::LINE_TITLE)));
+        y += s(Metrics::LINE_TITLE);
         sys::place(c.subtitle, sys::rect(x, y, inner, s(SUBTITLE)));
         y += s(SUBTITLE) + s(Metrics::SECTION_GAP);
 
@@ -1155,9 +1177,9 @@ impl RecoveryWindow {
             Step::SelectBackup | Step::SelectTarget => {
                 // The list is the whole content of these steps. What it is for
                 // is said once, under the heading.
-                let list_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                let list_height = (bottom - y - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 4));
                 geometry.card = Some((sys::rect(x, y, inner, list_height), false));
-                let gap = s(6);
+                let gap = s(Metrics::SPACE_XS);
                 sys::place(
                     c.list,
                     sys::rect(x + gap, y + gap, inner - gap * 2, list_height - gap * 2),
@@ -1169,17 +1191,21 @@ impl RecoveryWindow {
                 } else {
                     c.confirm_edit
                 };
-                let block = s(20) + s(Metrics::LABEL_GAP) + s(Metrics::INPUT_HEIGHT) + s(20);
-                let card_height = (bottom - y - block - s(Metrics::SECTION_GAP)).max(s(100));
+                let block = s(Metrics::LINE_BODY
+                    + Metrics::SPACE_S
+                    + Metrics::INPUT_HEIGHT
+                    + Metrics::SPACE_L);
+                let card_height =
+                    (bottom - y - block - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 5));
                 geometry.card = Some((sys::rect(x, y, inner, card_height), dangerous));
 
                 let mut text_x = x + pad;
                 let mut text_width = inner - pad * 2;
                 if dangerous {
-                    let mark = s(22);
-                    geometry.warning_icon = Some(sys::rect(x + pad, y + pad + s(2), mark, mark));
-                    text_x += mark + s(12);
-                    text_width -= mark + s(12);
+                    let mark = s(Metrics::LINE_BODY);
+                    geometry.warning_icon = Some(sys::rect(x + pad, y + pad, mark, mark));
+                    text_x += mark + s(Metrics::SPACE_M);
+                    text_width -= mark + s(Metrics::SPACE_M);
                 }
                 sys::place(
                     c.body,
@@ -1187,13 +1213,24 @@ impl RecoveryWindow {
                 );
                 y += card_height + s(Metrics::SECTION_GAP);
 
-                sys::place(c.confirm_label, sys::rect(x, y, inner, s(20)));
-                y += s(20) + s(Metrics::LABEL_GAP);
-                sys::place(field, sys::rect(x, y, s(380), s(Metrics::INPUT_HEIGHT)));
+                sys::place(
+                    c.confirm_label,
+                    sys::rect(x, y, inner, s(Metrics::LINE_BODY)),
+                );
+                y += s(Metrics::LINE_BODY + Metrics::SPACE_S);
+                sys::place(
+                    field,
+                    sys::rect(
+                        x,
+                        y,
+                        s(Metrics::BUTTON_WIDTH_WIDE * 2 + Metrics::BUTTON_GAP),
+                        s(Metrics::INPUT_HEIGHT),
+                    ),
+                );
             }
             Step::Restoring => {
-                sys::place(c.stage, sys::rect(x, y, inner, s(20)));
-                y += s(20) + s(12);
+                sys::place(c.stage, sys::rect(x, y, inner, s(Metrics::LINE_BODY)));
+                y += s(Metrics::LINE_BODY + Metrics::SPACE_M);
                 sys::place(
                     c.progress,
                     sys::rect(x, y, inner, s(Metrics::PROGRESS_HEIGHT)),
@@ -1201,7 +1238,7 @@ impl RecoveryWindow {
                 y += s(Metrics::PROGRESS_HEIGHT) + s(Metrics::SECTION_GAP);
                 // Down to the button row, not to the bottom of the window: the
                 // Exit button lives below this and must not be drawn over.
-                let card_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                let card_height = (bottom - y - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 4));
                 geometry.card = Some((sys::rect(x, y, inner, card_height), false));
                 sys::place(
                     c.body,
@@ -1209,7 +1246,7 @@ impl RecoveryWindow {
                 );
             }
             _ => {
-                let card_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+                let card_height = (bottom - y - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 4));
                 geometry.card = Some((sys::rect(x, y, inner, card_height), false));
                 sys::place(
                     c.body,

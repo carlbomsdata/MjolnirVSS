@@ -734,13 +734,33 @@ impl BackupWindow {
 
     /// Creates one label, in a given type style and colour.
     fn label(&mut self, h: HWND, text: &str, id: i32, style: TextStyle, tone: Tone) -> HWND {
-        let hwnd = sys::create_control(
-            h,
-            ControlKind::Label,
-            text,
-            id,
-            theme::font(style, self.dpi),
-        );
+        self.label_of(h, ControlKind::Label, text, id, style, tone)
+    }
+
+    /// Creates one label whose text sits against its right edge.
+    ///
+    /// For a value at the right of a card, so its right edge lands on the
+    /// card's padding rather than wherever the text happens to end.
+    fn label_right(&mut self, h: HWND, text: &str, id: i32, style: TextStyle, tone: Tone) -> HWND {
+        self.label_of(h, ControlKind::LabelRight, text, id, style, tone)
+    }
+
+    /// Creates one block of text, wrapped over as many lines as it needs.
+    fn paragraph(&mut self, h: HWND, text: &str, id: i32, style: TextStyle, tone: Tone) -> HWND {
+        self.label_of(h, ControlKind::Paragraph, text, id, style, tone)
+    }
+
+    /// Creates a label of a given kind, registering its colours as it goes.
+    fn label_of(
+        &mut self,
+        h: HWND,
+        kind: ControlKind,
+        text: &str,
+        id: i32,
+        style: TextStyle,
+        tone: Tone,
+    ) -> HWND {
+        let hwnd = sys::create_control(h, kind, text, id, theme::font(style, self.dpi));
         self.tones.push((hwnd, tone));
         let (foreground, background) = tone.colours(&Palette::current());
         set_label_colours(hwnd, foreground, background);
@@ -792,7 +812,7 @@ impl BackupWindow {
             TextStyle::Caption,
             Tone::OnRailDim,
         );
-        self.controls.rail_footer = self.label(
+        self.controls.rail_footer = self.paragraph(
             h,
             &rail_footer_text(),
             ID_RAIL_FOOTER,
@@ -802,7 +822,7 @@ impl BackupWindow {
 
         self.controls.page_title =
             self.label(h, "", ID_PAGE_TITLE, TextStyle::Title, Tone::TitleOnPage);
-        self.controls.page_subtitle = self.label(
+        self.controls.page_subtitle = self.paragraph(
             h,
             "",
             ID_PAGE_SUBTITLE,
@@ -822,7 +842,7 @@ impl BackupWindow {
             self.label(h, "", ID_DISK_NAME, TextStyle::Heading, Tone::TitleOnCard);
         self.controls.disk_meta =
             self.label(h, "", ID_DISK_META, TextStyle::Caption, Tone::DimOnCard);
-        self.controls.data_overline = self.label(
+        self.controls.data_overline = self.label_right(
             h,
             "To back up",
             ID_DATA_OVERLINE,
@@ -830,10 +850,10 @@ impl BackupWindow {
             Tone::DimOnCard,
         );
         self.controls.data_figure =
-            self.label(h, "", ID_DATA_FIGURE, TextStyle::Figure, Tone::TitleOnCard);
+            self.label_right(h, "", ID_DATA_FIGURE, TextStyle::Figure, Tone::TitleOnCard);
         self.controls.part_legend =
             self.label(h, "", ID_PART_LEGEND, TextStyle::Caption, Tone::DimOnCard);
-        self.controls.notes = self.label(h, "", ID_NOTES, TextStyle::Caption, Tone::Caution);
+        self.controls.notes = self.paragraph(h, "", ID_NOTES, TextStyle::Caption, Tone::Caution);
 
         self.controls.dest_label = self.label(
             h,
@@ -855,7 +875,7 @@ impl BackupWindow {
         );
         self.controls.name_edit =
             sys::create_control(h, ControlKind::TextBox, "", ID_NAME_EDIT, body);
-        self.controls.space = self.label(h, "", ID_SPACE, TextStyle::Caption, Tone::OnPage);
+        self.controls.space = self.paragraph(h, "", ID_SPACE, TextStyle::Caption, Tone::OnPage);
         self.controls.start = sys::create_control(
             h,
             ControlKind::AccentButton,
@@ -864,7 +884,7 @@ impl BackupWindow {
             theme::font(TextStyle::Strong, self.dpi),
         );
         set_item_style(self.controls.start, ItemStyle::Primary);
-        self.controls.reassurance = self.label(
+        self.controls.reassurance = self.paragraph(
             h,
             "The backup is verified automatically when it finishes.",
             ID_REASSURANCE,
@@ -882,7 +902,7 @@ impl BackupWindow {
         );
         self.controls.prog_stage = self.label(h, "", ID_PROG_STAGE, TextStyle::Body, Tone::OnCard);
         self.controls.prog_percent =
-            self.label(h, "", ID_PROG_PERCENT, TextStyle::Figure, Tone::TitleOnCard);
+            self.label_right(h, "", ID_PROG_PERCENT, TextStyle::Figure, Tone::TitleOnCard);
         self.controls.progress =
             sys::create_control(h, ControlKind::ProgressBar, "", ID_PROGRESS, body);
         for index in 0..STATS {
@@ -926,7 +946,7 @@ impl BackupWindow {
         self.controls.result_title =
             self.label(h, "", ID_RESULT_TITLE, TextStyle::Title, Tone::TitleOnPage);
         self.controls.result_note =
-            self.label(h, "", ID_RESULT_NOTE, TextStyle::Subtitle, Tone::DimOnPage);
+            self.paragraph(h, "", ID_RESULT_NOTE, TextStyle::Subtitle, Tone::DimOnPage);
         self.controls.result_body =
             sys::create_control(h, ControlKind::TextArea, "", ID_RESULT_BODY, body);
         self.tone_of(self.controls.result_body, Tone::OnCard);
@@ -976,7 +996,7 @@ impl BackupWindow {
 
         // --- recovery media and settings ---
         self.controls.media_body =
-            self.label(h, MEDIA_BODY, ID_MEDIA_BODY, TextStyle::Body, Tone::OnCard);
+            self.paragraph(h, MEDIA_BODY, ID_MEDIA_BODY, TextStyle::Body, Tone::OnCard);
         self.controls.media_requirement = self.label(
             h,
             "Requires the Windows Assessment and Deployment Kit.",
@@ -984,7 +1004,7 @@ impl BackupWindow {
             TextStyle::Caption,
             Tone::DimOnPage,
         );
-        self.controls.settings_body = self.label(
+        self.controls.settings_body = self.paragraph(
             h,
             SETTINGS_BODY,
             ID_SETTINGS_BODY,
@@ -1088,39 +1108,48 @@ impl BackupWindow {
 
         // ---- the rail -----------------------------------------------------
         let rail = s(Metrics::NAV_WIDTH);
-        let icon = s(26);
-        geometry.brand_icon = sys::rect(s(20), s(22), icon, icon);
+        let icon = s(Metrics::LINE_HEADING);
+        let brand_x = s(Metrics::SPACE_L);
+        let text_x = brand_x + icon + s(Metrics::SPACE_M);
+        let text_width = rail - text_x - s(Metrics::SPACE_M);
+
+        // The mark, the name and the version are one block, centred together
+        // in the rail's header rather than each placed at its own guessed y.
+        let block = Metrics::LINE_HEADING + Metrics::LINE_CAPTION;
+        let block_top = (s(Metrics::NAV_HEADER) - s(block)) / 2;
+        geometry.brand_icon = sys::rect(brand_x, block_top + (s(block) - icon) / 2, icon, icon);
         sys::place(
             self.controls.brand,
-            sys::rect(s(20) + icon + s(10), s(22), rail - s(56) - icon, s(24)),
+            sys::rect(text_x, block_top, text_width, s(Metrics::LINE_HEADING)),
         );
         sys::place(
             self.controls.brand_version,
-            sys::rect(s(20) + icon + s(10), s(46), rail - s(56) - icon, s(16)),
+            sys::rect(
+                text_x,
+                block_top + s(Metrics::LINE_HEADING),
+                text_width,
+                s(Metrics::LINE_CAPTION),
+            ),
         );
 
         let item_width = rail - s(Metrics::NAV_INSET) * 2;
-        let mut ny = s(Metrics::NAV_HEADER) + s(14);
-        for (index, hwnd) in [
+        let mut ny = s(Metrics::NAV_HEADER);
+        for hwnd in [
             self.controls.nav_backup,
             self.controls.nav_restore,
             self.controls.nav_media,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let _ = index;
+        ] {
             sys::place(
                 hwnd,
                 sys::rect(s(Metrics::NAV_INSET), ny, item_width, s(Metrics::NAV_ITEM)),
             );
-            ny += s(Metrics::NAV_ITEM) + s(Metrics::NAV_ITEM_GAP);
+            ny += s(Metrics::NAV_ITEM + Metrics::NAV_ITEM_GAP);
         }
 
         // Settings sits at the bottom of the rail, the way Windows' own
         // settings applications put it, with the footer beneath it.
-        let footer_height = s(46);
-        let settings_y = height - s(18) - footer_height - s(Metrics::NAV_ITEM);
+        let footer_height = s(Metrics::LINE_CAPTION * 3);
+        let settings_y = height - s(Metrics::SPACE_L) - footer_height - s(Metrics::NAV_ITEM);
         sys::place(
             self.controls.nav_settings,
             sys::rect(
@@ -1133,9 +1162,9 @@ impl BackupWindow {
         sys::place(
             self.controls.rail_footer,
             sys::rect(
-                s(20),
-                height - s(10) - footer_height,
-                rail - s(32),
+                brand_x,
+                height - s(Metrics::SPACE_M) - footer_height,
+                rail - brand_x - s(Metrics::SPACE_M),
                 footer_height,
             ),
         );
@@ -1148,14 +1177,14 @@ impl BackupWindow {
         let mut y = s(Metrics::PAGE_MARGIN);
         sys::place(
             self.controls.page_title,
-            sys::rect(x, y, inner, s(Metrics::PAGE_TITLE)),
+            sys::rect(x, y, inner, s(Metrics::LINE_TITLE)),
         );
-        y += s(Metrics::PAGE_TITLE) + s(2);
+        y += s(Metrics::LINE_TITLE);
         sys::place(
             self.controls.page_subtitle,
-            sys::rect(x, y, inner, s(Metrics::PAGE_SUBTITLE)),
+            sys::rect(x, y, inner, s(Metrics::LINE_BODY)),
         );
-        y += s(Metrics::PAGE_SUBTITLE) + s(Metrics::SECTION_GAP);
+        y += s(Metrics::LINE_BODY + Metrics::SPACE_L);
 
         match self.screen {
             Screen::Backup => self.layout_backup(x, y, inner, floor, &s, &mut geometry),
@@ -1182,28 +1211,58 @@ impl BackupWindow {
         let pad = s(Metrics::CARD_PADDING);
 
         // The disk card: what is being copied, how much of it there is, and how
-        // the disk is laid out.
-        let card_height = pad * 2 + s(14 + 6 + 24 + 2 + 18 + 16 + Metrics::PARTITION_BAR + 8 + 16);
-        let card = sys::rect(x, top, inner, card_height);
-        geometry.cards.push(card);
+        // the disk is laid out. The left column names the disk; the right one
+        // carries the figure, right aligned so it ends on the card's padding.
+        let rows = Metrics::LINE_CAPTION
+            + Metrics::SPACE_XS
+            + Metrics::LINE_HEADING
+            + Metrics::LINE_CAPTION
+            + Metrics::SPACE_L
+            + Metrics::PARTITION_BAR
+            + Metrics::SPACE_S
+            + Metrics::LINE_CAPTION;
+        let card_height = pad * 2 + s(rows);
+        geometry.cards.push(sys::rect(x, top, inner, card_height));
 
-        let figure_width = s(150);
-        let left_width = inner - pad * 2 - figure_width - s(16);
+        let figure_width = s(Metrics::BUTTON_WIDTH_WIDE);
+        let left_width = inner - pad * 2 - figure_width - s(Metrics::SPACE_L);
+        let right_x = x + inner - pad - figure_width;
+
         let mut cy = top + pad;
-        sys::place(c.disk_overline, sys::rect(x + pad, cy, left_width, s(14)));
+        sys::place(
+            c.disk_overline,
+            sys::rect(x + pad, cy, left_width, s(Metrics::LINE_CAPTION)),
+        );
         sys::place(
             c.data_overline,
-            sys::rect(x + inner - pad - figure_width, cy, figure_width, s(14)),
+            sys::rect(right_x, cy, figure_width, s(Metrics::LINE_CAPTION)),
         );
-        cy += s(14) + s(6);
-        sys::place(c.disk_name, sys::rect(x + pad, cy, left_width, s(24)));
+        cy += s(Metrics::LINE_CAPTION + Metrics::SPACE_XS);
+
+        // The heading and the figure share a row. Both are single line labels,
+        // which centre their text in their box, so boxes of different heights
+        // still line up; the figure's box is the taller of the two and is
+        // raised by half the difference to keep both centred on one line.
+        let figure_lift = s(Metrics::LINE_FIGURE - Metrics::LINE_HEADING) / 2;
+        sys::place(
+            c.disk_name,
+            sys::rect(x + pad, cy, left_width, s(Metrics::LINE_HEADING)),
+        );
         sys::place(
             c.data_figure,
-            sys::rect(x + inner - pad - figure_width, cy, figure_width, s(34)),
+            sys::rect(
+                right_x,
+                cy - figure_lift,
+                figure_width,
+                s(Metrics::LINE_FIGURE),
+            ),
         );
-        cy += s(24) + s(2);
-        sys::place(c.disk_meta, sys::rect(x + pad, cy, left_width, s(18)));
-        cy += s(18) + s(16);
+        cy += s(Metrics::LINE_HEADING);
+        sys::place(
+            c.disk_meta,
+            sys::rect(x + pad, cy, left_width, s(Metrics::LINE_CAPTION)),
+        );
+        cy += s(Metrics::LINE_CAPTION + Metrics::SPACE_L);
 
         geometry.partition_bar = Some(sys::rect(
             x + pad,
@@ -1221,77 +1280,83 @@ impl BackupWindow {
                     .collect()
             })
             .unwrap_or_default();
-        cy += s(Metrics::PARTITION_BAR) + s(8);
+        cy += s(Metrics::PARTITION_BAR + Metrics::SPACE_S);
         sys::place(
             c.part_legend,
-            sys::rect(x + pad, cy, inner - pad * 2, s(16)),
+            sys::rect(x + pad, cy, inner - pad * 2, s(Metrics::LINE_CAPTION)),
         );
 
-        let mut y = top + card_height + s(16);
+        let mut y = top + card_height + s(Metrics::SPACE_L);
 
-        // Anything the plan wants to say that does not stop the backup. Four
-        // lines, because a normal machine produces three notes and a sentence
-        // cut in half is worse than no sentence at all.
+        // Anything the plan wants to say that does not stop the backup.
         let has_notes = self
             .plan
             .as_ref()
             .map(|p| !p.warnings.is_empty())
             .unwrap_or(false);
         if has_notes {
-            let notes_height = s(72);
+            let notes_height = s(Metrics::LINE_CAPTION * 4);
             sys::place(c.notes, sys::rect(x, y, inner, notes_height));
-            y += notes_height + s(16);
+            y += notes_height + s(Metrics::SPACE_L);
         }
 
-        // Where it goes.
-        sys::place(c.dest_label, sys::rect(x, y, inner, s(18)));
-        y += s(18) + s(Metrics::LABEL_GAP);
-        let browse_width = s(96);
+        // Where it goes. Both inputs share both edges, so the two rows read as
+        // one block rather than two controls that happen to be near each other.
+        let button = s(Metrics::BUTTON_WIDTH);
+        let input_width = inner - button - s(Metrics::BUTTON_GAP);
+        sys::place(c.dest_label, sys::rect(x, y, inner, s(Metrics::LINE_BODY)));
+        y += s(Metrics::LINE_BODY + Metrics::SPACE_S);
         sys::place(
             c.dest_edit,
-            sys::rect(
-                x,
-                y,
-                inner - browse_width - s(Metrics::CONTROL_GAP),
-                s(Metrics::INPUT_HEIGHT),
-            ),
+            sys::rect(x, y, input_width, s(Metrics::INPUT_HEIGHT)),
         );
+        // The button is taller than the box it sits beside, so it is centred on
+        // it rather than hung from the same top edge.
+        let button_lift = s(Metrics::BUTTON_HEIGHT - Metrics::INPUT_HEIGHT) / 2;
         sys::place(
             c.dest_browse,
             sys::rect(
-                x + inner - browse_width,
-                y,
-                browse_width,
-                s(Metrics::INPUT_HEIGHT),
+                x + inner - button,
+                y - button_lift,
+                button,
+                s(Metrics::BUTTON_HEIGHT),
             ),
         );
-        y += s(Metrics::INPUT_HEIGHT) + s(12);
+        y += s(Metrics::INPUT_HEIGHT + Metrics::SPACE_M);
 
-        sys::place(c.name_label, sys::rect(x, y, inner, s(18)));
-        y += s(18) + s(Metrics::LABEL_GAP);
+        sys::place(c.name_label, sys::rect(x, y, inner, s(Metrics::LINE_BODY)));
+        y += s(Metrics::LINE_BODY + Metrics::SPACE_S);
         sys::place(
             c.name_edit,
-            sys::rect(x, y, s(320), s(Metrics::INPUT_HEIGHT)),
+            sys::rect(x, y, input_width, s(Metrics::INPUT_HEIGHT)),
         );
-        y += s(Metrics::INPUT_HEIGHT) + s(10);
+        y += s(Metrics::INPUT_HEIGHT + Metrics::SPACE_S);
 
-        sys::place(c.space, sys::rect(x, y, inner, s(34)));
+        sys::place(
+            c.space,
+            sys::rect(x, y, inner, s(Metrics::LINE_CAPTION * 2)),
+        );
 
         // The primary action, and the one line of reassurance under it.
-        let button_width = s(170);
-        let button_y = floor - s(Metrics::BUTTON_HEIGHT) - s(22);
+        let action = s(Metrics::BUTTON_WIDTH_WIDE);
+        let button_y = floor - s(Metrics::BUTTON_HEIGHT + Metrics::SPACE_S + Metrics::LINE_CAPTION);
         sys::place(
             c.start,
             sys::rect(
-                x + inner - button_width,
+                x + inner - action,
                 button_y,
-                button_width,
+                action,
                 s(Metrics::BUTTON_HEIGHT),
             ),
         );
         sys::place(
             c.reassurance,
-            sys::rect(x, button_y + s(Metrics::BUTTON_HEIGHT) + s(6), inner, s(16)),
+            sys::rect(
+                x,
+                button_y + s(Metrics::BUTTON_HEIGHT + Metrics::SPACE_S),
+                inner,
+                s(Metrics::LINE_CAPTION),
+            ),
         );
     }
 
@@ -1308,50 +1373,79 @@ impl BackupWindow {
         let pad = s(Metrics::CARD_PADDING);
 
         // The card carrying the headline, the bar and the figures.
-        let card_height =
-            pad * 2 + s(24 + 6 + 18 + 18 + Metrics::PROGRESS_HEIGHT + 20 + 14 + 6 + 20);
-        let card = sys::rect(x, top, inner, card_height);
-        geometry.cards.push(card);
+        let rows = Metrics::LINE_HEADING
+            + Metrics::LINE_BODY
+            + Metrics::SPACE_L
+            + Metrics::PROGRESS_HEIGHT
+            + Metrics::SPACE_L
+            + Metrics::LINE_CAPTION
+            + Metrics::SPACE_XS
+            + Metrics::LINE_BODY;
+        let card_height = pad * 2 + s(rows);
+        geometry.cards.push(sys::rect(x, top, inner, card_height));
 
-        let percent_width = s(150);
+        let percent_width = s(Metrics::BUTTON_WIDTH_WIDE);
+        let text_width = inner - pad * 2 - percent_width - s(Metrics::SPACE_L);
+        let right_x = x + inner - pad - percent_width;
+
+        // The percentage is centred against the two lines beside it, the same
+        // way the figure is on the backup screen.
+        let block = Metrics::LINE_HEADING + Metrics::LINE_BODY;
+        let percent_lift = s(Metrics::LINE_FIGURE - block) / 2;
+
         let mut cy = top + pad;
         sys::place(
             c.prog_heading,
-            sys::rect(x + pad, cy, inner - pad * 2 - percent_width, s(24)),
+            sys::rect(x + pad, cy, text_width, s(Metrics::LINE_HEADING)),
         );
         sys::place(
             c.prog_percent,
-            sys::rect(x + inner - pad - percent_width, cy, percent_width, s(38)),
+            sys::rect(
+                right_x,
+                cy - percent_lift,
+                percent_width,
+                s(Metrics::LINE_FIGURE),
+            ),
         );
-        cy += s(24) + s(6);
+        cy += s(Metrics::LINE_HEADING);
         sys::place(
             c.prog_stage,
-            sys::rect(x + pad, cy, inner - pad * 2 - percent_width, s(18)),
+            sys::rect(x + pad, cy, text_width, s(Metrics::LINE_BODY)),
         );
-        cy += s(18) + s(18);
+        cy += s(Metrics::LINE_BODY + Metrics::SPACE_L);
         sys::place(
             c.progress,
             sys::rect(x + pad, cy, inner - pad * 2, s(Metrics::PROGRESS_HEIGHT)),
         );
-        cy += s(Metrics::PROGRESS_HEIGHT) + s(20);
+        cy += s(Metrics::PROGRESS_HEIGHT + Metrics::SPACE_L);
 
-        // Four figures in a row, each a small heading over a value.
+        // Four figures in a row, each a small heading over a value, every
+        // column the same width and every pair on the same two baselines.
         let column = (inner - pad * 2) / STATS as i32;
         for index in 0..STATS {
             let cx = x + pad + column * index as i32;
-            sys::place(c.stat_key[index], sys::rect(cx, cy, column - s(8), s(14)));
+            let width = column - s(Metrics::SPACE_S);
+            sys::place(
+                c.stat_key[index],
+                sys::rect(cx, cy, width, s(Metrics::LINE_CAPTION)),
+            );
             sys::place(
                 c.stat_value[index],
-                sys::rect(cx, cy + s(14) + s(6), column - s(8), s(20)),
+                sys::rect(
+                    cx,
+                    cy + s(Metrics::LINE_CAPTION + Metrics::SPACE_XS),
+                    width,
+                    s(Metrics::LINE_BODY),
+                ),
             );
         }
 
-        let mut y = top + card_height + s(Metrics::SECTION_GAP);
+        let mut y = top + card_height + s(Metrics::SPACE_L);
 
         // The stages, with the one running marked.
         let stages_height = pad * 2 + s(Metrics::STAGE_ROW) * STAGES as i32;
         geometry.cards.push(sys::rect(x, y, inner, stages_height));
-        let mark = s(16);
+        let mark = s(Metrics::LINE_CAPTION);
         let mut sy = y + pad;
         for index in 0..STAGES {
             geometry.stage_marks.push(sys::rect(
@@ -1363,33 +1457,33 @@ impl BackupWindow {
             sys::place(
                 c.stage_row[index],
                 sys::rect(
-                    x + pad + mark + s(12),
+                    x + pad + mark + s(Metrics::SPACE_M),
                     sy,
-                    inner - pad * 2 - mark - s(12),
+                    inner - pad * 2 - mark - s(Metrics::SPACE_M),
                     s(Metrics::STAGE_ROW),
                 ),
             );
             sy += s(Metrics::STAGE_ROW);
         }
-        y += stages_height + s(Metrics::SECTION_GAP);
+        y += stages_height + s(Metrics::SPACE_L);
 
         let bottom = floor - s(Metrics::BUTTON_HEIGHT);
+        let button = s(Metrics::BUTTON_WIDTH);
         sys::place(
             c.details_toggle,
-            sys::rect(x, bottom, s(130), s(Metrics::BUTTON_HEIGHT)),
+            sys::rect(x, bottom, button, s(Metrics::BUTTON_HEIGHT)),
         );
-        let cancel_width = s(130);
         sys::place(
             c.cancel,
             sys::rect(
-                x + inner - cancel_width,
+                x + inner - button,
                 bottom,
-                cancel_width,
+                button,
                 s(Metrics::BUTTON_HEIGHT),
             ),
         );
         if self.show_details {
-            let height = (bottom - y - s(12)).max(s(40));
+            let height = (bottom - y - s(Metrics::SPACE_M)).max(s(Metrics::LINE_BODY * 2));
             sys::place(c.details, sys::rect(x, y, inner, height));
         }
     }
@@ -1406,43 +1500,38 @@ impl BackupWindow {
         let c = &self.controls;
         // The title block replaces the page heading on this screen, and carries
         // a mark saying at a glance how it went.
-        let icon = s(30);
-        geometry.result_icon = Some((
-            sys::rect(x, top + s(2), icon, icon),
-            match &self.finished {
-                Some(JobResult::Backup(Err(_)))
+        let icon = s(Metrics::LINE_TITLE);
+        let failed = matches!(
+            &self.finished,
+            Some(JobResult::Backup(Err(_)))
                 | Some(JobResult::Media(Err(_)))
-                | Some(JobResult::Extract(Err(_))) => Glyph::Warning,
-                _ => Glyph::Tick,
-            },
-            matches!(
-                &self.finished,
-                Some(JobResult::Backup(Err(_)))
-                    | Some(JobResult::Media(Err(_)))
-                    | Some(JobResult::Extract(Err(_)))
-            ),
+                | Some(JobResult::Extract(Err(_)))
+        );
+        geometry.result_icon = Some((
+            sys::rect(x, top, icon, icon),
+            if failed { Glyph::Warning } else { Glyph::Tick },
+            failed,
         ));
 
-        let text_x = x + icon + s(14);
-        let text_width = inner - icon - s(14);
+        let text_x = x + icon + s(Metrics::SPACE_M);
+        let text_width = inner - icon - s(Metrics::SPACE_M);
         sys::place(
             c.result_title,
-            sys::rect(text_x, top, text_width, s(Metrics::PAGE_TITLE)),
+            sys::rect(text_x, top, text_width, s(Metrics::LINE_TITLE)),
         );
         sys::place(
             c.result_note,
             sys::rect(
                 text_x,
-                top + s(Metrics::PAGE_TITLE) + s(2),
+                top + s(Metrics::LINE_TITLE),
                 text_width,
-                s(Metrics::PAGE_SUBTITLE),
+                s(Metrics::LINE_BODY),
             ),
         );
 
-        let mut y =
-            top + s(Metrics::PAGE_TITLE) + s(Metrics::PAGE_SUBTITLE) + s(Metrics::SECTION_GAP);
+        let mut y = top + s(Metrics::LINE_TITLE + Metrics::LINE_BODY + Metrics::SPACE_L);
         let bottom = floor - s(Metrics::BUTTON_HEIGHT);
-        let body_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+        let body_height = (bottom - y - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 4));
         geometry.cards.push(sys::rect(x, y, inner, body_height));
         let pad = s(Metrics::CARD_PADDING);
         sys::place(
@@ -1452,20 +1541,23 @@ impl BackupWindow {
         y += body_height;
         let _ = y;
 
+        // Two widths and one gap: the two long labels are wide, Close is not.
+        let wide = s(Metrics::BUTTON_WIDTH_WIDE);
+        let gap = s(Metrics::BUTTON_GAP);
         sys::place(
             c.open_folder,
-            sys::rect(x, bottom, s(160), s(Metrics::BUTTON_HEIGHT)),
+            sys::rect(x, bottom, wide, s(Metrics::BUTTON_HEIGHT)),
         );
         sys::place(
             c.make_media,
-            sys::rect(x + s(170), bottom, s(190), s(Metrics::BUTTON_HEIGHT)),
+            sys::rect(x + wide + gap, bottom, wide, s(Metrics::BUTTON_HEIGHT)),
         );
         sys::place(
             c.close,
             sys::rect(
-                x + inner - s(100),
+                x + inner - s(Metrics::BUTTON_WIDTH),
                 bottom,
-                s(100),
+                s(Metrics::BUTTON_WIDTH),
                 s(Metrics::BUTTON_HEIGHT),
             ),
         );
@@ -1482,48 +1574,46 @@ impl BackupWindow {
     ) {
         let c = &self.controls;
         let mut y = top;
-        sys::place(c.browse_volume, sys::rect(x, y, inner, s(22)));
-        y += s(22) + s(2);
-        sys::place(c.browse_path, sys::rect(x, y, inner, s(16)));
-        y += s(16) + s(12);
+        sys::place(
+            c.browse_volume,
+            sys::rect(x, y, inner, s(Metrics::LINE_HEADING)),
+        );
+        y += s(Metrics::LINE_HEADING);
+        sys::place(
+            c.browse_path,
+            sys::rect(x, y, inner, s(Metrics::LINE_CAPTION)),
+        );
+        y += s(Metrics::LINE_CAPTION + Metrics::SPACE_M);
 
         let bottom = floor - s(Metrics::BUTTON_HEIGHT);
-        let list_height = (bottom - y - s(Metrics::SECTION_GAP)).max(s(80));
+        let list_height = (bottom - y - s(Metrics::SPACE_L)).max(s(Metrics::LINE_BODY * 4));
         geometry.cards.push(sys::rect(x, y, inner, list_height));
-        let pad = s(6);
+        let pad = s(Metrics::SPACE_XS);
         sys::place(
             c.browse_list,
             sys::rect(x + pad, y + pad, inner - pad * 2, list_height - pad * 2),
         );
 
-        let button = s(96);
-        let gap = s(Metrics::CONTROL_GAP);
-        sys::place(
-            c.browse_back,
-            sys::rect(x, bottom, button, s(Metrics::BUTTON_HEIGHT)),
-        );
-        sys::place(
-            c.browse_up,
-            sys::rect(x + button + gap, bottom, button, s(Metrics::BUTTON_HEIGHT)),
-        );
-        sys::place(
-            c.browse_open,
-            sys::rect(
-                x + (button + gap) * 2,
-                bottom,
-                button,
-                s(Metrics::BUTTON_HEIGHT),
-            ),
-        );
-        let extract = s(160);
+        let button = s(Metrics::BUTTON_WIDTH);
+        let gap = s(Metrics::BUTTON_GAP);
+        for (index, hwnd) in [c.browse_back, c.browse_up, c.browse_open]
+            .into_iter()
+            .enumerate()
+        {
+            sys::place(
+                hwnd,
+                sys::rect(
+                    x + (button + gap) * index as i32,
+                    bottom,
+                    button,
+                    s(Metrics::BUTTON_HEIGHT),
+                ),
+            );
+        }
+        let wide = s(Metrics::BUTTON_WIDTH_WIDE);
         sys::place(
             c.browse_extract,
-            sys::rect(
-                x + inner - extract,
-                bottom,
-                extract,
-                s(Metrics::BUTTON_HEIGHT),
-            ),
+            sys::rect(x + inner - wide, bottom, wide, s(Metrics::BUTTON_HEIGHT)),
         );
     }
 
@@ -1538,21 +1628,27 @@ impl BackupWindow {
     ) {
         let c = &self.controls;
         let pad = s(Metrics::CARD_PADDING);
-        let card_height = s(190);
+        let card_height = pad * 2 + s(Metrics::LINE_BODY * 8);
         geometry.cards.push(sys::rect(x, top, inner, card_height));
         sys::place(
             c.media_body,
             sys::rect(x + pad, top + pad, inner - pad * 2, card_height - pad * 2),
         );
 
-        let y = top + card_height + s(Metrics::SECTION_GAP);
+        let y = top + card_height + s(Metrics::SPACE_L);
+        let wide = s(Metrics::BUTTON_WIDTH_WIDE);
         sys::place(
             c.make_media,
-            sys::rect(x, y, s(230), s(Metrics::BUTTON_HEIGHT)),
+            sys::rect(x, y, wide, s(Metrics::BUTTON_HEIGHT)),
         );
         sys::place(
             c.media_requirement,
-            sys::rect(x, y + s(Metrics::BUTTON_HEIGHT) + s(8), inner, s(16)),
+            sys::rect(
+                x,
+                y + s(Metrics::BUTTON_HEIGHT + Metrics::SPACE_S),
+                inner,
+                s(Metrics::LINE_CAPTION),
+            ),
         );
         let _ = floor;
     }
@@ -1567,7 +1663,7 @@ impl BackupWindow {
         geometry: &mut Geometry,
     ) {
         let pad = s(Metrics::CARD_PADDING);
-        let card_height = s(210).min(floor - top);
+        let card_height = (pad * 2 + s(Metrics::LINE_BODY * 9)).min(floor - top);
         geometry.cards.push(sys::rect(x, top, inner, card_height));
         sys::place(
             self.controls.settings_body,
