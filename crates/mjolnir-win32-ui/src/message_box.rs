@@ -23,7 +23,12 @@ use crate::sys::wide;
 /// Formats an error the way the product promises.
 pub fn format_error(e: &Error) -> String {
     format!(
-        "{}\n\nWhy this matters:\n{}\n\nWhat to do next:\n{}",
+        // Carriage returns as well as newlines. A message box renders either,
+        // but a plain edit control renders only this pair, and the same text
+        // goes to both: a failed restore put its three paragraphs onto the
+        // wizard's page as one run-on sentence because a lone newline is not a
+        // line break to an EDIT.
+        "{}\r\n\r\nWhy this matters:\r\n{}\r\n\r\nWhat to do next:\r\n{}",
         capitalise(e.what()),
         capitalise(e.why()),
         capitalise(e.next_step())
@@ -250,6 +255,28 @@ fn capitalise(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The same error text is shown in a message box and written into an edit
+    /// control on a results page. An edit control breaks lines only on a
+    /// carriage return and newline together, so a lone newline turns three
+    /// paragraphs into one run-on sentence. That reached a real screen.
+    #[test]
+    fn an_error_breaks_its_lines_the_way_an_edit_control_needs() {
+        let e = Error::new(
+            ExitCode::Failure,
+            "writing to the disk failed",
+            "the target disk may be failing",
+            "try a different disk",
+        );
+        let text = super::format_error(&e);
+        assert!(text.contains("\r\n"), "{text:?}");
+        assert!(
+            !text.replace("\r\n", "").contains('\n'),
+            "a bare newline is left in the text: {text:?}"
+        );
+        // And the three parts are still separated by a blank line.
+        assert_eq!(text.matches("\r\n\r\n").count(), 2, "{text:?}");
+    }
+
     use super::*;
     use mjolnir_core::ExitCode;
 
