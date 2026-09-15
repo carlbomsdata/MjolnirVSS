@@ -244,6 +244,49 @@ pub fn high_contrast() -> bool {
 pub struct Metrics;
 
 impl Metrics {
+    /// The unit every measurement is a multiple of.
+    ///
+    /// Four, because Windows' own scaling plateaus (125%, 150%, 175% and so on)
+    /// turn a multiple of four into a whole number of pixels at every one of
+    /// them. Anything else lands on a half pixel and looks soft on one machine
+    /// and crisp on another.
+    pub const UNIT: i32 = 4;
+
+    /// Inside a pair that reads as one thing: a value under its own heading.
+    pub const SPACE_XS: i32 = 4;
+    /// Between a label and the control it names.
+    pub const SPACE_S: i32 = 8;
+    /// Between two related controls.
+    pub const SPACE_M: i32 = 12;
+    /// Between two groups of controls.
+    pub const SPACE_L: i32 = 20;
+    /// Between two sections of a page.
+    pub const SPACE_XL: i32 = 28;
+
+    /// The width of a command button.
+    ///
+    /// There are two button widths in the whole application and no others.
+    /// Windows' own guidance is to use one or two on a surface, and the reason
+    /// is visible the moment there are nine: a row of buttons with nothing in
+    /// common looks like a row of accidents.
+    pub const BUTTON_WIDTH: i32 = 120;
+    /// The width of a primary action, or of a button whose label will not fit
+    /// in [`Self::BUTTON_WIDTH`].
+    pub const BUTTON_WIDTH_WIDE: i32 = 184;
+    /// Between two buttons side by side.
+    pub const BUTTON_GAP: i32 = 8;
+
+    /// The box one line of caption text occupies.
+    pub const LINE_CAPTION: i32 = 16;
+    /// The box one line of body text occupies.
+    pub const LINE_BODY: i32 = 20;
+    /// The box one line of heading text occupies.
+    pub const LINE_HEADING: i32 = 24;
+    /// The box a page title occupies.
+    pub const LINE_TITLE: i32 = 32;
+    /// The box a large figure occupies.
+    pub const LINE_FIGURE: i32 = 40;
+
     /// Width of the navigation rail.
     pub const NAV_WIDTH: i32 = 224;
     /// Height of one navigation item.
@@ -258,34 +301,37 @@ impl Metrics {
     pub const NAV_MARKER: i32 = 3;
 
     /// Margin between the content and the edge of its pane.
-    pub const PAGE_MARGIN: i32 = 26;
+    pub const PAGE_MARGIN: i32 = 28;
     /// Padding inside a card.
-    pub const CARD_PADDING: i32 = 18;
+    pub const CARD_PADDING: i32 = 20;
     /// Vertical gap between two sections of a page.
-    pub const SECTION_GAP: i32 = 20;
+    pub const SECTION_GAP: i32 = Self::SPACE_L;
     /// Vertical gap between a label and the control it names.
-    pub const LABEL_GAP: i32 = 6;
+    pub const LABEL_GAP: i32 = Self::SPACE_S;
     /// Gap between two controls on the same row.
-    pub const CONTROL_GAP: i32 = 10;
+    pub const CONTROL_GAP: i32 = Self::SPACE_S;
     /// Corner radius of a card or a painted button.
     pub const RADIUS: i32 = 6;
 
     /// Height of a push button.
-    pub const BUTTON_HEIGHT: i32 = 34;
+    pub const BUTTON_HEIGHT: i32 = 32;
     /// Height of a text box or other single line input.
-    pub const INPUT_HEIGHT: i32 = 30;
+    ///
+    /// Four short of a button on purpose: an input is not a command, and
+    /// Windows' own dialogs make the same distinction.
+    pub const INPUT_HEIGHT: i32 = 28;
     /// Height of a progress bar.
-    pub const PROGRESS_HEIGHT: i32 = 10;
+    pub const PROGRESS_HEIGHT: i32 = 8;
     /// Height of one line of body text.
-    pub const LINE: i32 = 20;
+    pub const LINE: i32 = Self::LINE_BODY;
     /// Height of the title block at the top of a page.
-    pub const PAGE_TITLE: i32 = 30;
+    pub const PAGE_TITLE: i32 = Self::LINE_TITLE;
     /// Height of the supporting line under a page title.
-    pub const PAGE_SUBTITLE: i32 = 22;
+    pub const PAGE_SUBTITLE: i32 = Self::LINE_BODY;
     /// Height of the bar showing a disk's partitions.
-    pub const PARTITION_BAR: i32 = 30;
+    pub const PARTITION_BAR: i32 = 28;
     /// Height of one entry in a list of stages.
-    pub const STAGE_ROW: i32 = 26;
+    pub const STAGE_ROW: i32 = 28;
 
     /// Scales a design value to a window's actual dpi.
     pub fn at(value: i32, dpi: u32) -> i32 {
@@ -313,6 +359,41 @@ const _: () = assert!(
     Metrics::NAV_WIDTH > Metrics::NAV_ITEM,
     "the rail has to be wider than one of its items is tall"
 );
+const _: () = assert!(
+    Metrics::BUTTON_WIDTH_WIDE > Metrics::BUTTON_WIDTH,
+    "the wide button is the wider of the two"
+);
+
+// The spacing scale has to be a scale: every step bigger than the last, and
+// every one a whole number of units, or it is just eight arbitrary numbers.
+const _: () = assert!(Metrics::SPACE_XS < Metrics::SPACE_S);
+const _: () = assert!(Metrics::SPACE_S < Metrics::SPACE_M);
+const _: () = assert!(Metrics::SPACE_M < Metrics::SPACE_L);
+const _: () = assert!(Metrics::SPACE_L < Metrics::SPACE_XL);
+const _: () = assert!(Metrics::SPACE_XS % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::SPACE_S % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::SPACE_M % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::SPACE_L % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::SPACE_XL % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::BUTTON_WIDTH % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::BUTTON_WIDTH_WIDE % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::BUTTON_HEIGHT % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::INPUT_HEIGHT % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::NAV_WIDTH % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::NAV_ITEM % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::PAGE_MARGIN % Metrics::UNIT == 0);
+
+// Every line box is a whole number of units too, so two of them stacked land on
+// the grid rather than half a unit off it.
+const _: () = assert!(Metrics::LINE_CAPTION % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::LINE_BODY % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::LINE_HEADING % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::LINE_TITLE % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::LINE_FIGURE % Metrics::UNIT == 0);
+const _: () = assert!(Metrics::LINE_CAPTION < Metrics::LINE_BODY);
+const _: () = assert!(Metrics::LINE_BODY < Metrics::LINE_HEADING);
+const _: () = assert!(Metrics::LINE_HEADING < Metrics::LINE_TITLE);
+const _: () = assert!(Metrics::LINE_TITLE < Metrics::LINE_FIGURE);
 
 /// Which of the application's type styles a piece of text is.
 ///

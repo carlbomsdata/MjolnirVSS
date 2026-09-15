@@ -17,7 +17,7 @@ use windows::Win32::Graphics::Gdi::{
     COLOR_WINDOW, COLOR_WINDOWTEXT, HBRUSH, HDC, HFONT, LOGFONTW, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::SystemServices::SS_LEFT;
+use windows::Win32::System::SystemServices::{SS_CENTERIMAGE, SS_ENDELLIPSIS, SS_LEFT, SS_RIGHT};
 use windows::Win32::UI::Controls::{
     InitCommonControlsEx, ICC_PROGRESS_CLASS, ICC_STANDARD_CLASSES, INITCOMMONCONTROLSEX,
     PBM_SETPOS, PBM_SETRANGE32, PBM_SETSTATE, PBST_ERROR, PBST_NORMAL, PBST_PAUSED,
@@ -199,8 +199,22 @@ pub enum ControlKind {
     Button,
     /// The default push button, activated by Enter.
     DefaultButton,
-    /// A read only text label.
+    /// A read only label holding one line of text.
+    ///
+    /// The text is centred in the control's box rather than drawn at the top of
+    /// it. That is what lets two labels of different sizes sit on one row and
+    /// look aligned: a static drawn the default way puts its text against the
+    /// top edge, so a heading in a 26 unit box and a figure in a 40 unit box
+    /// start at the same y and visibly do not line up.
     Label,
+    /// The same, with the text against the right edge.
+    ///
+    /// For a value at the right of a card, so its right edge lines up with the
+    /// card's padding instead of floating wherever the text happens to end.
+    LabelRight,
+    /// A read only label holding a paragraph, wrapped over as many lines as it
+    /// needs and drawn from the top.
+    Paragraph,
     /// A single line text box.
     TextBox,
     /// A single line text box that shows dots instead of what is typed.
@@ -235,13 +249,24 @@ impl ControlKind {
         matches!(self, ControlKind::NavItem | ControlKind::AccentButton)
     }
 
+    /// Whether this control holds a single line whose text is centred in its
+    /// box.
+    ///
+    /// Two of these placed on one row line up whatever their boxes are, which a
+    /// paragraph does not.
+    pub fn is_single_line_label(self) -> bool {
+        matches!(self, ControlKind::Label | ControlKind::LabelRight)
+    }
+
     fn class(self) -> PCWSTR {
         match self {
             ControlKind::Button
             | ControlKind::DefaultButton
             | ControlKind::NavItem
             | ControlKind::AccentButton => w!("BUTTON"),
-            ControlKind::Label => w!("STATIC"),
+            ControlKind::Label | ControlKind::LabelRight | ControlKind::Paragraph => {
+                w!("STATIC")
+            }
             ControlKind::TextBox | ControlKind::PasswordBox | ControlKind::TextArea => {
                 w!("EDIT")
             }
@@ -257,7 +282,17 @@ impl ControlKind {
             ControlKind::DefaultButton => {
                 base | WS_TABSTOP | WS_GROUP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32)
             }
-            ControlKind::Label => base | WINDOW_STYLE(SS_LEFT.0),
+            // A single line, centred in its box, and cut with an ellipsis rather
+            // than allowed to run past the edge of the card it sits on.
+            ControlKind::Label => {
+                base | WINDOW_STYLE(SS_LEFT.0 | SS_CENTERIMAGE.0 | SS_ENDELLIPSIS.0)
+            }
+            ControlKind::LabelRight => {
+                base | WINDOW_STYLE(SS_RIGHT.0 | SS_CENTERIMAGE.0 | SS_ENDELLIPSIS.0)
+            }
+            // Wrapped, and drawn from the top: centring a paragraph in its box
+            // would move every line as the text changed length.
+            ControlKind::Paragraph => base | WINDOW_STYLE(SS_LEFT.0),
             ControlKind::TextBox => {
                 base | WS_TABSTOP | WINDOW_STYLE((ES_LEFT | ES_AUTOHSCROLL) as u32)
             }
@@ -629,6 +664,38 @@ pub const INITIALLY_DISABLED: WINDOW_STYLE = WS_DISABLED;
 mod tests {
     use super::*;
 
+    /// A single line label centres its text, and a paragraph does not. Getting
+    /// this the wrong way round is what made a heading and a figure on the same
+    /// row sit at visibly different heights: a static drawn the default way puts
+    /// its text against the top of its box, so two boxes of different heights
+    /// starting at the same y do not look aligned at all.
+    #[test]
+    fn single_line_labels_centre_their_text_and_paragraphs_do_not() {
+        for kind in [ControlKind::Label, ControlKind::LabelRight] {
+            assert!(kind.is_single_line_label(), "{kind:?}");
+            assert_ne!(
+                kind.style().0 & SS_CENTERIMAGE.0,
+                0,
+                "{kind:?} draws its text against the top of its box"
+            );
+        }
+        assert!(!ControlKind::Paragraph.is_single_line_label());
+        assert_eq!(
+            ControlKind::Paragraph.style().0 & SS_CENTERIMAGE.0,
+            0,
+            "a paragraph must wrap from the top, not float in the middle"
+        );
+    }
+
+    /// A single line that is too long is cut with an ellipsis rather than drawn
+    /// over whatever is beside it. A disk model is exactly that kind of text.
+    #[test]
+    fn single_line_labels_are_cut_rather_than_overflowing() {
+        for kind in [ControlKind::Label, ControlKind::LabelRight] {
+            assert_ne!(kind.style().0 & SS_ENDELLIPSIS.0, 0, "{kind:?}");
+        }
+    }
+
     #[test]
     fn scaling_matches_the_reference_dpi() {
         assert_eq!(scale(100, 96), 100);
@@ -658,6 +725,8 @@ mod tests {
             ControlKind::Button,
             ControlKind::DefaultButton,
             ControlKind::Label,
+            ControlKind::LabelRight,
+            ControlKind::Paragraph,
             ControlKind::TextBox,
             ControlKind::TextArea,
             ControlKind::ProgressBar,
@@ -698,6 +767,8 @@ mod tests {
         // manager gave it the keyboard and it swallowed Return.
         for kind in [
             ControlKind::Label,
+            ControlKind::LabelRight,
+            ControlKind::Paragraph,
             ControlKind::ProgressBar,
             ControlKind::TextArea,
         ] {
@@ -727,6 +798,8 @@ mod tests {
             ControlKind::Button,
             ControlKind::DefaultButton,
             ControlKind::Label,
+            ControlKind::LabelRight,
+            ControlKind::Paragraph,
             ControlKind::TextBox,
             ControlKind::PasswordBox,
             ControlKind::TextArea,
